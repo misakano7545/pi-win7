@@ -16,7 +16,9 @@ $node = Join-Path $root "node\node.exe"
 if (Test-Path $node) {
   Show "node.exe present" "yes"
   Show "node --version" (& $node --version)
-  Show "node exe sha256" ((certutil -hashfile $node SHA256 | Select-Object -Skip 1 -First 1).Trim())
+  # Indexed rather than Select-Object -Skip: -Skip needs PowerShell 3.0, and
+  # Windows 7 ships 2.0.
+  Show "node exe sha256" ((certutil -hashfile $node SHA256)[1].Trim())
 } else { Show "node.exe present" "MISSING" }
 
 Write-Host ""

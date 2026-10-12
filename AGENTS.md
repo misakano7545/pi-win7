@@ -120,6 +120,10 @@ Attribution:
 
 For release preparation, publishing, verification, or recovery, load and follow [.pi/skills/release.md](.pi/skills/release.md).
 
+## Windows 7 distribution
+
+Work in the `win7` branch only. For building, shipping, or changing that package, load and follow [.pi/skills/win7.md](.pi/skills/win7.md).
+
 ## User Override
 
 If the user's instructions conflict with any rule in this document, ask for explicit confirmation before overriding. Only then execute their instructions.

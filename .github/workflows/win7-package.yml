@@ -105,10 +105,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # --latest=false: this repository mirrors upstream's releases, and a
-          # Windows 7 package must never take over the "Latest" slot.
           gh release create "$GITHUB_REF_NAME" \
-            --latest=false \
             --title "Pi for Windows 7 — $GITHUB_REF_NAME" \
             --notes "Self-contained Pi for Windows 7 SP1 x64. Unzip and run pi.bat from mintty or ConEmu; see README.txt inside.
 

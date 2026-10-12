@@ -34,15 +34,19 @@ scan() {
     local pe rel symbols
     while IFS= read -r pe; do
         rel="${pe#"$dir"/}"
-        # Imported names only, identified by the "<none>" ordinal column. Matching
-        # on the import-table section header instead silently produced nothing on
-        # the CI runner's binutils 2.42 while working on 2.44 locally.
-        symbols="$(objdump -p "$pe" | awk '
+        # Imported names only. The row shape is "<vma> <ordinal> <hint> <name> <addr>";
+        # keying off the ordinal spelling ("<none>") broke on binutils 2.42, so
+        # accept any row whose last field is a name, minus the table headers.
+        symbols="$(objdump -p "$pe" 2>&1 | awk '
             /DLL Name:/ { dll = $3; next }
-            dll != "" && $2 == "<none>" { print dll "/" $NF }
+            dll != "" && NF >= 2 && $NF ~ /^[A-Za-z_]/ && $NF != "Member-Name" && $NF != "Bound-To" { print dll "/" $NF }
         ' | sort -u)"
         [[ -n "$symbols" ]] || {
-            echo "$rel: no imports parsed, refusing to compare ($(objdump --version | head -1))" >&2
+            {
+                echo "$rel: no imports parsed, refusing to compare ($(objdump --version | head -1))"
+                echo "--- objdump -p output, first 30 lines ---"
+                objdump -p "$pe" 2>&1 | head -30
+            } >&2
             exit 1
         }
         sed "s|^|${rel}: |" <<<"$symbols"

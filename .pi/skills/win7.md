@@ -117,8 +117,10 @@ mintty is bundled but opt-in (`PI_WIN7_MINTTY=1`). Two hard-won details:
 - Invoke it as `mintty.exe <node.exe> <cli.js>`, never through `cmd`. mintty is an
   msys program that rewrites "/"-prefixed arguments, so `mintty -e cmd /c <script>`
   runs nothing and exits 0 -- the failure looks like "the launcher did nothing".
-- It is off the default path because of that failure mode: a launcher whose default
-  route can silently do nothing is worse than one that cannot reopen a window.
+- Neither form can be checked in CI: on the runner mintty exits in about half a
+  second without running its child, because there is no interactive desktop. The
+  invocation is only verifiable on a real Windows desktop, which is the other reason
+  it is not the default route.
 
 The package ships `agent/settings.json` with `terminal.clearOnShrink: true`: the
 console does not repaint rows the frame stopped using, so a line the editor vacated

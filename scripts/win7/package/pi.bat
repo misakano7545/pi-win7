@@ -6,13 +6,19 @@ if not exist "%ROOT%node\node.exe" (
   exit /b 1
 )
 
+set "PI_CODING_AGENT_DIR=%ROOT%agent"
+set "PI_OFFLINE=1"
+set "PATH=%ROOT%node;%ROOT%git\cmd;%ROOT%git\usr\bin;%PATH%"
+
 rem Windows 7's console cannot report modified keys (ENABLE_VIRTUAL_TERMINAL_INPUT
-rem does not exist before Windows 10), so Shift+Enter never arrives. The bundled
-rem mintty fixes that, but it is opt-in: mintty can exit 0 without running its
-rem child, which turns the default entry point into "nothing happens".
+rem does not exist before Windows 10) and echoes stray bytes into Pi's input, so
+rem Shift+Enter never arrives and typing can insert a line of its own. mintty is a
+rem real pty and fixes both, but it stays opt-in until it is confirmed on the target.
 if "%~1"=="" if defined PI_WIN7_MINTTY if not defined TERM if exist "%ROOT%git\usr\bin\mintty.exe" (
   echo [mintty] opening Pi in mintty
-  start /wait "" "%ROOT%git\usr\bin\mintty.exe" -e cmd /c "%~f0"
+  rem Pass node and the entry script directly: msys rewrites "/"-prefixed arguments,
+  rem so routing this through `cmd /c <script>` silently runs nothing.
+  start /wait "" "%ROOT%git\usr\bin\mintty.exe" "%ROOT%node\node.exe" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js"
   if not errorlevel 1 exit /b 0
   echo [hint] mintty did not start; running Pi in this window instead.
 )
@@ -21,8 +27,5 @@ rem A full-screen TUI needs room: at the console default of 80 columns long path
 rem split mid-word and the status area collides.
 mode con cols=120 lines=34 >nul 2>nul
 
-set "PI_CODING_AGENT_DIR=%ROOT%agent"
-set "PI_OFFLINE=1"
-set "PATH=%ROOT%node;%ROOT%git\cmd;%ROOT%git\usr\bin;%PATH%"
 "%ROOT%node\node.exe" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
 exit /b %ERRORLEVEL%

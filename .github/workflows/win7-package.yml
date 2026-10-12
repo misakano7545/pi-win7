@@ -42,6 +42,7 @@ jobs:
           test -f "$P/agent/bin/fd.exe"
           test -f "$P/pi.bat"
           test -f "$P/verify.ps1"
+          test -f "$P/agent/settings.json"
           test -f "$P/git/usr/bin/bash.exe"
           test -f "$P/git/usr/bin/mintty.exe"
           test -f "$P/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
@@ -100,6 +101,18 @@ jobs:
           call pkg\pi.bat --help || exit /b 1
           set "PI_WIN7_MINTTY="
           call pkg\pi.bat --help || exit /b 1
+
+      # mintty is the only path that gives Pi a real pty on Windows 7, and its
+      # invocation is easy to get wrong: msys rewrites "/"-prefixed arguments, so
+      # routing through `cmd /c <script>` silently runs nothing. Prove the shape the
+      # launcher uses actually executes the program.
+      - name: Assert mintty runs the program it is given
+        shell: cmd
+        run: |
+          del mintty-marker.txt 2>nul
+          start /wait "" pkg\git\usr\bin\mintty.exe pkg\node\node.exe -e "require('fs').writeFileSync('%CD%\mintty-marker.txt','ok')"
+          if not exist mintty-marker.txt (echo mintty did not run the program & exit /b 1)
+          echo mintty ran the program
 
       # The bundle must carry a working bash (Pi's bash tool) and mintty (the
       # terminal the launcher reopens into).

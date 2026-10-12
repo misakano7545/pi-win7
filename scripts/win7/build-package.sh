@@ -144,6 +144,16 @@ rm -rf "$PKG_DIR/pi/node_modules/@earendil-works/pi-tui/native/darwin" \
 cp "$ROOT/scripts/win7/package/pi.bat" "$ROOT/scripts/win7/package/README.txt" \
    "$ROOT/scripts/win7/package/verify.ps1" "$PKG_DIR/"
 
+# The Windows 7 console does not repaint rows the frame stopped using, so a line
+# the editor vacated lingers for the rest of the session.
+cat >"$PKG_DIR/agent/settings.json" <<'EOF'
+{
+  "terminal": {
+    "clearOnShrink": true
+  }
+}
+EOF
+
 cat >"$PKG_DIR/node/SOURCES.txt" <<EOF
 node.exe ${NODE_TAG} -- DeftKing/nodejs-win7 ${NODE_ARCHIVE}
   archive sha256 ${NODE_SHA256}

@@ -44,6 +44,12 @@ Non-interactive use (works even in a plain cmd.exe window)
        pi.bat -p "explain this project"
        pi.bat --mode json "list the files" > events.jsonl
 
+Windows 7 adjustments
+---------------------
+pi.bat sizes the window to 120x34 (the console default of 80 columns splits paths
+mid-word) and points Pi at agent\settings.json, which sets
+terminal.clearOnShrink so rows the interface stops using do not stay on screen.
+
 Known limits
 ------------
 * The terminal layer is only partly verified. Rendering and colours work in the

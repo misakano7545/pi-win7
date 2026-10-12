@@ -112,11 +112,22 @@ that result -- modifier keys arrive stripped, so `Shift+Enter` is
 indistinguishable from `Enter`. Use `Ctrl+J` for a newline. No package change can
 fix this.
 
-mintty is bundled but opt-in (`PI_WIN7_MINTTY=1`). It must stay off the default
-path: `mintty -e cmd /c <script>` returns exit code 0 without running the child on
-the CI runner, so any default that routes through it can produce "nothing happens"
-with no error to show. The launcher therefore runs Pi in the current window, which
-is the path verified on real hardware.
+mintty is bundled but opt-in (`PI_WIN7_MINTTY=1`). Two hard-won details:
+
+- Invoke it as `mintty.exe <node.exe> <cli.js>`, never through `cmd`. mintty is an
+  msys program that rewrites "/"-prefixed arguments, so `mintty -e cmd /c <script>`
+  runs nothing and exits 0 -- the failure looks like "the launcher did nothing".
+- It is off the default path because of that failure mode: a launcher whose default
+  route can silently do nothing is worse than one that cannot reopen a window.
+
+The package ships `agent/settings.json` with `terminal.clearOnShrink: true`: the
+console does not repaint rows the frame stopped using, so a line the editor vacated
+(an input row the console's stray bytes created) lingers for the whole session.
+
+`tui.input.newLine` defaults to `["shift+enter", "ctrl+j"]`, and `ctrl+j` is byte
+0x0A. On a console that echoes stray bytes into stdin, a phantom LF therefore reads
+as "insert a newline". If a line still appears on its own, remapping that binding in
+`agent/keybindings.json` is the next lever -- it trades away Ctrl+J for newlines.
 
 Layout: at 80 columns the TUI is cramped -- long paths split mid-word and the
 status area collides. `pi.bat` sets 120x34 with `mode con`; if the screen is too

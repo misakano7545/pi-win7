@@ -23,6 +23,14 @@ How to start
    (Shift+Enter never arrives otherwise).
 2. First run: /login to connect a provider, then /model to pick a model.
 
+If the mintty window never appears, the launcher falls back to running Pi in the
+window it was started from. You can also force that directly:
+
+       set PI_WIN7_NO_MINTTY=1    (PowerShell: $env:PI_WIN7_NO_MINTTY=1)
+       pi.bat
+
+There, press Ctrl+J for a newline - the old console cannot report Shift+Enter.
+
 Writing your own extensions
 ---------------------------
 TypeScript needs no build step. Put a file in agent\extensions\ or load it

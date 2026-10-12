@@ -31,22 +31,21 @@ dir="${1:-}"
 command -v objdump >/dev/null 2>&1 || { echo "missing tool: objdump (binutils)" >&2; exit 1; }
 
 scan() {
-    local pe rel
+    local pe rel symbols
     while IFS= read -r pe; do
         rel="${pe#"$dir"/}"
-        # Only the import table matters: objdump also prints unwind/function
-        # tables full of addresses, which are not symbols at all.
-        objdump -p "$pe" |
-            awk '
-                /^The Import Tables/ { imports = 1; next }
-                /^The [A-Z]/ { imports = 0 }
-                imports && /DLL Name:/ { dll = $3 }
-                # NF >= 3 also matches the header row, whose third column is an
-                # IAT address; symbol rows carry "<none>" or an ordinal there.
-                imports && /^[[:space:]]+[0-9a-f]+[[:space:]]/ && $2 !~ /^[0-9a-f]+$/ && NF >= 3 { print dll "/" $NF }
-            ' |
-            sort -u |
-            sed "s|^|${rel}: |"
+        # Imported names only, identified by the "<none>" ordinal column. Matching
+        # on the import-table section header instead silently produced nothing on
+        # the CI runner's binutils 2.42 while working on 2.44 locally.
+        symbols="$(objdump -p "$pe" | awk '
+            /DLL Name:/ { dll = $3; next }
+            dll != "" && $2 == "<none>" { print dll "/" $NF }
+        ' | sort -u)"
+        [[ -n "$symbols" ]] || {
+            echo "$rel: no imports parsed, refusing to compare ($(objdump --version | head -1))" >&2
+            exit 1
+        }
+        sed "s|^|${rel}: |" <<<"$symbols"
     done < <(find "$dir" \( -name '*.exe' -o -name '*.dll' -o -name '*.node' \) -type f | sort)
 }
 

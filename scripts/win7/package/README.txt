@@ -17,17 +17,15 @@ first start.
 How to start
 ------------
 1. Install Git for Windows 2.46.2 (the last Windows 7 version). It provides two
-   things Pi needs: the "bash" tool, and mintty (a terminal that understands
-   ANSI/VT escapes - the Windows 7 console does not).
-2. Open mintty (Git Bash) and run:
+   things Pi needs: the "bash" tool, and mintty, which is a resizable terminal.
+2. Open a command window wide enough and run:
 
        cd /d/pi-win7-x64
        ./pi.bat
 
-   Do NOT start pi.bat from Explorer, cmd.exe, or PowerShell: all three host the
-   Windows 7 console, which has no ANSI/VT interpreter and cannot render Pi's
-   interface. Start it from mintty (Git Bash) or ConEmu with "ANSI and xterm
-   sequences" enabled.
+   The Windows 7 console does render Pi's interface (verified), but at 80 columns
+   it is cramped: paths split mid-word and the status area collides. Use a window
+   at least ~100 columns wide, or mintty (Git Bash), which resizes freely.
 3. If Enter behaves oddly (Shift+Enter submits instead of adding a line), press
    Ctrl+J for a newline. Windows 7 cannot report modified keys, so Pi never sees
    the Shift.
@@ -51,9 +49,9 @@ Non-interactive use (works even in a plain cmd.exe window)
 
 Known limits
 ------------
-* The terminal layer is the one part nobody has verified on Windows 7. If mintty
-  misbehaves, try ConEmu; if the interface is unreadable in a window, use the
-  -p / --mode json forms above.
+* The terminal layer is only partly verified. Rendering and colours work in the
+  Windows 7 console (measured), but modified keys do not, so Shift+Enter is not
+  available (use Ctrl+J). At 80 columns the interface is cramped.
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a
   Node runtime instead.

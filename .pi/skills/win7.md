@@ -96,22 +96,24 @@ CI cannot cover any of this: the oldest Windows runner is Server 2022 and
 `windows-2019` is retired, so the Windows job proves the package is intact, not
 that Windows 7 runs it. `verify.ps1` on the real machine is the only evidence.
 
-## Terminal limits on Windows 7
+## Terminal behaviour on Windows 7
 
-Two separate limits, both in the console's API surface rather than in pi.
+Measured on the real machine: pi 1.1.0 renders colours and escape sequences
+correctly in the Windows 7 console, and Node reports 80x25 there. So "the old
+console cannot draw the TUI" is wrong -- do not repeat it.
 
-Output: Windows 7's console has no ANSI/VT interpreter, and pi never requests
-`ENABLE_VIRTUAL_TERMINAL_PROCESSING` (0x0004). cmd.exe, PowerShell and Explorer
-all host that same console, so pi's escape sequences print as literal text in any
-of them. Run `pi.bat` from mintty (Git for Windows 2.46.2) or ConEmu, which
-implement VT themselves.
+The two limits that are real both come from the console's API surface, not pi:
 
 Input: `packages/tui/native/win32/src/win32-platform.c` enables
 `ENABLE_VIRTUAL_TERMINAL_INPUT` (0x0200), added in Windows 10 1511. On Windows 7
 `SetConsoleMode` rejects it, the helper returns false, and `terminal.ts` ignores
-the result -- so modifier keys arrive stripped and `Shift+Enter` is
+that result -- modifier keys arrive stripped, so `Shift+Enter` is
 indistinguishable from `Enter`. Use `Ctrl+J` for a newline. No package change can
 fix this.
+
+Layout: at 80 columns the TUI is cramped -- long paths split mid-word and the
+status area collides. Run it in a window at least ~100 columns wide (cmd.exe
+window properties, or mintty, which is resizable).
 
 ## Shipping
 

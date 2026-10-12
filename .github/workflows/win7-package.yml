@@ -42,6 +42,8 @@ jobs:
           test -f "$P/agent/bin/fd.exe"
           test -f "$P/pi.bat"
           test -f "$P/verify.ps1"
+          test -f "$P/git/usr/bin/bash.exe"
+          test -f "$P/git/usr/bin/mintty.exe"
           test -f "$P/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
           # esbuild is the only binary in the tree that needs Windows 10 (Go build).
           test ! -d "$P/pi/node_modules/@esbuild"
@@ -103,6 +105,17 @@ jobs:
           call pkg\pi.bat | findstr /c:"[mintty]" >nul || (echo launcher never reached the mintty branch & exit /b 1)
           set "PI_WIN7_NO_MINTTY=1"
           call pkg\pi.bat --help || exit /b 1
+
+      # The bundle must carry a working bash (Pi's bash tool) and mintty (the
+      # terminal the launcher reopens into).
+      - name: Assert bundled Git works
+        shell: cmd
+        run: |
+          pkg\git\usr\bin\bash.exe --version || exit /b 1
+          pkg\git\usr\bin\mintty.exe --version || exit /b 1
+          pkg\git\cmd\git.exe --version || exit /b 1
+          set "PATH=%CD%\pkg\git\usr\bin;%PATH%"
+          bash.exe -c "echo bash-from-bundle" || exit /b 1
 
   release:
     needs: verify-windows

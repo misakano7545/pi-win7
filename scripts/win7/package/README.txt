@@ -10,19 +10,18 @@ first start.
     pi-win7-x64/
       pi.bat      <-- run this (the entry point, where pi.exe sits in the official zip)
       node/       Windows 7-compatible Node.js runtime
+      git/        portable Git for Windows: bash for Pi's bash tool, mintty as terminal
       pi/         the Pi program tree
       agent/      your data: settings, sessions, credentials, extensions
       agent/bin/  rg.exe + fd.exe, pinned to the last Windows 7-compatible builds
 
 How to start
 ------------
-1. Install Git for Windows 2.46.2 (the last Windows 7 version). Pi needs it for
-   its bash tool, and it also brings mintty.
-2. Run pi.bat. That is the whole procedure. On Windows 7 the launcher widens the
-   window and reopens Pi inside mintty, because the old console cannot report
-   modified keys (Shift+Enter never arrives). If Git is missing, the launcher says
-   so and Pi still starts here - press Ctrl+J for a newline in that window.
-3. First run: /login to connect a provider, then /model to pick a model.
+1. Run pi.bat. That is the whole procedure: nothing to install first, no admin
+   rights, no registry. On Windows 7 the launcher widens the window and reopens Pi
+   inside the bundled mintty, because the old console cannot report modified keys
+   (Shift+Enter never arrives otherwise).
+2. First run: /login to connect a provider, then /model to pick a model.
 
 Writing your own extensions
 ---------------------------
@@ -44,8 +43,8 @@ Known limits
 ------------
 * The terminal layer is only partly verified. Rendering and colours work in the
   Windows 7 console (measured), but modified keys do not, which is why pi.bat
-  reopens itself inside mintty. Without Git, Shift+Enter is unavailable (Ctrl+J
-  inserts a newline) and the window stays 120x34.
+  reopens itself inside the bundled mintty. If mintty is ever removed from the
+  package, Pi still starts in the current window: press Ctrl+J for a newline.
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a
   Node runtime instead.
@@ -66,6 +65,11 @@ Without it pi could not run on Windows 7 at all - official Node.js dropped
 Windows 7 in v20.3.0. That project carries no license file, so redistributing it
 here is a deliberate choice; node\SOURCES.txt names the exact archive and its
 sha256.
+
+git\ is PortableGit from Git for Windows 2.46.2 (the last release supporting
+Windows 7): https://github.com/git-for-windows/git/releases/tag/v2.46.2.windows.1
+It is GPLv2 software redistributed unmodified as a separate program - Pi invokes
+it, it is not linked into Pi. Its own LICENSE.txt ships inside git\.
 
 Verification
 ------------

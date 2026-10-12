@@ -6,25 +6,27 @@ if not exist "%ROOT%node\node.exe" (
   exit /b 1
 )
 
+rem The bundled portable Git finishes its own setup on first use.
+if exist "%ROOT%git\post-install.bat" if not exist "%ROOT%git\.postinstalled" (
+  call "%ROOT%git\post-install.bat" >nul 2>nul
+  type nul > "%ROOT%git\.postinstalled"
+)
+
 rem Interactive start from the Windows 7 console: that console cannot report
 rem modified keys (ENABLE_VIRTUAL_TERMINAL_INPUT does not exist before Windows 10),
-rem so reopen inside mintty, which Git for Windows -- already required for the bash
-rem tool -- installs. Only for the interactive case: -p and pipes must not be sent
-rem to a new window.
+rem so reopen inside mintty. Only for the interactive case -- -p and pipes must not
+rem be sent to a new window. A mintty already on PATH wins so this stays testable.
 if "%~1"=="" if not defined TERM if not defined PI_WIN7_NO_MINTTY (
   set "MINTTY="
-  for %%d in ("%ProgramFiles%\Git\usr\bin" "%ProgramFiles(x86)%\Git\usr\bin") do (
-    if exist "%%~d\mintty.exe" set "MINTTY=%%~d\mintty.exe"
-  )
-  if not defined MINTTY (
-    where mintty >nul 2>nul && set "MINTTY=mintty"
-  )
+  where mintty >nul 2>nul
+  if not errorlevel 1 set "MINTTY=mintty"
+  if not defined MINTTY if exist "%ROOT%git\usr\bin\mintty.exe" set "MINTTY=%ROOT%git\usr\bin\mintty.exe"
   if defined MINTTY (
     echo [mintty] restarting Pi in mintty so modified keys work
     start "" "%MINTTY%" -e cmd /c "%~f0"
     exit /b 0
   )
-  echo [hint] Ctrl+J inserts a newline here. Install Git for Windows 2.46.2 for mintty.
+  echo [hint] Ctrl+J inserts a newline here; the bundled git\usr\bin\mintty.exe is missing.
 )
 
 rem A full-screen TUI needs room: at the console default of 80 columns long paths
@@ -33,6 +35,6 @@ mode con cols=120 lines=34 >nul 2>nul
 
 set "PI_CODING_AGENT_DIR=%ROOT%agent"
 set "PI_OFFLINE=1"
-set "PATH=%ROOT%node;%PATH%"
+set "PATH=%ROOT%node;%ROOT%git\cmd;%ROOT%git\usr\bin;%PATH%"
 "%ROOT%node\node.exe" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
 exit /b %ERRORLEVEL%

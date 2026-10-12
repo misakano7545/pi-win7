@@ -53,7 +53,10 @@ scan() {
             exit 1
         }
         sed "s|^|${rel}: |" <<<"$symbols"
-    done < <(find "$dir" \( -name '*.exe' -o -name '*.dll' -o -name '*.node' \) -type f | sort)
+    # git/ is excluded on purpose: its provenance is a sha256 published by upstream,
+    # which is stronger evidence than this scan. The net is for the components whose
+    # hash we froze ourselves.
+    done < <(find "$dir" \( -name '*.exe' -o -name '*.dll' -o -name '*.node' \) -type f -not -path "*/git/*" | sort)
 }
 
 current="$(mktemp)"

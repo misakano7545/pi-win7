@@ -23,6 +23,7 @@ re-running the checks in this skill.
 | Component | Version | Why this one |
 |---|---|---|
 | Node runtime | DeftKing/nodejs-win7 `v22.23.2` | official Node.js dropped Windows 7 in v20.3.0 (`GetSystemTimePreciseAsFileTime`); this community build removed that import |
+| PortableGit `git/` | 2.46.2 | last release supporting Windows 7; supplies bash for Pi's bash tool and mintty, the terminal that can report modified keys |
 | ripgrep `rg.exe` | 14.1.0 | 14.1.1 was built with Rust 1.78, whose Windows targets require Windows 10 |
 | fd `fd.exe` | 10.3.0 | 10.4.0 raised the MSRV to 1.90 and dropped Windows 7 |
 | pi | 1.1.0 | pinned; newer releases raise the Node feature floor again |

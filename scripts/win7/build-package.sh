@@ -25,12 +25,16 @@ NODE_TAG="v22.23.2"
 NODE_ARCHIVE="node-v22.23.2-win-x64.7z"
 RG_VERSION="14.1.0"
 FD_VERSION="v10.3.0"
+GIT_TAG="v2.46.2.windows.1"
+GIT_ARCHIVE="PortableGit-2.46.2-64-bit.7z.exe"
 
-# Frozen upstream artifact hashes. These archives carry no signature, so this is
-# the only provenance anchor: verify once by hand, then freeze here.
+# Frozen upstream artifact hashes. ripgrep and fd publish no signature, so this is
+# the only provenance anchor for them: verify once by hand, then freeze here.
 RG_SHA256="fe4f75edfaa50f0d4fecbf47696b7629f3449c9c2c5a4da828753139e5a2e203"
 FD_SHA256="318aa2a6fa664325933e81fda60d523fff29444129e91ebf0726b5b3bcd8b059"
 NODE_SHA256="78974ffc058fc73e72633b5772f2b162e0d26ddb8bf6a03214f202291617f618"
+# Taken from the SHA-256 table in the Git for Windows release notes, not computed here.
+GIT_SHA256="58ae5c1a27d3f9ce8518c1a187860973cfa4dd604f518350e84f7baf418fc9fa"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUT_DIR="$ROOT/.artifacts"
@@ -75,6 +79,8 @@ fetch "https://github.com/sharkdp/fd/releases/download/${FD_VERSION}/fd-${FD_VER
     "$CACHE_DIR/fd.zip" "$FD_SHA256"
 fetch "https://github.com/DeftKing/nodejs-win7/releases/download/${NODE_TAG}/${NODE_ARCHIVE}" \
     "$CACHE_DIR/node.7z" "$NODE_SHA256"
+fetch "https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/${GIT_ARCHIVE}" \
+    "$CACHE_DIR/$GIT_ARCHIVE" "$GIT_SHA256"
 
 # --- runtime and search tools -------------------------------------------------
 
@@ -91,6 +97,18 @@ trap 'rm -rf "$unpack"' EXIT
 cp "$(find "$unpack/rg" -name rg.exe | head -1)" "$PKG_DIR/agent/bin/rg.exe"
 cp "$(find "$unpack/fd" -name fd.exe | head -1)" "$PKG_DIR/agent/bin/fd.exe"
 cp -r "$unpack/node/${NODE_ARCHIVE%.7z}/." "$PKG_DIR/node/"
+
+# --- portable Git ------------------------------------------------------------
+
+# Supplies bash for Pi's bash tool and mintty as the terminal, so the package needs
+# nothing installed. The .7z.exe is a self-extracting archive; 7z reads its payload
+# directly, and post-install.bat runs from pi.bat on first launch since it needs
+# Windows. The whole prefix is kept: trimming mingw64/ or usr/ breaks bash in ways
+# that only show up on the target machine.
+7z x -y -o"$PKG_DIR/git" "$CACHE_DIR/$GIT_ARCHIVE" >/dev/null
+for f in usr/bin/bash.exe usr/bin/mintty.exe cmd/git.exe; do
+    [[ -f "$PKG_DIR/git/$f" ]] || { echo "PortableGit extraction produced no $f" >&2; exit 1; }
+done
 
 # --- pi runtime tree ---------------------------------------------------------
 
@@ -135,6 +153,12 @@ rg.exe ${RG_VERSION} -- BurntSushi/ripgrep x86_64-pc-windows-msvc
 fd.exe ${FD_VERSION} -- sharkdp/fd x86_64-pc-windows-msvc
   archive sha256 ${FD_SHA256}
 pi ${PI_VERSION} -- @earendil-works/pi-coding-agent from the npm registry
+EOF
+
+cat >"$PKG_DIR/git/SOURCE.txt" <<EOF
+PortableGit ${GIT_TAG} -- git-for-windows/git ${GIT_ARCHIVE}
+  archive sha256 ${GIT_SHA256} (published in the release notes)
+  GPLv2, redistributed unmodified as a separate program
 EOF
 
 (

@@ -86,6 +86,24 @@ jobs:
           & ./pkg/node/node.exe $cli --version
           if ($LASTEXITCODE -ne 0) { throw "pi --version failed" }
 
+      # pi.bat is the only thing a Windows 7 user runs, and its mintty branch
+      # cannot be reached by hand here -- so dispatch it against a stub. A batch
+      # syntax error in that branch would leave the user with no working entry
+      # point, which is exactly the failure this job exists to catch.
+      - name: Exercise the launcher
+        shell: cmd
+        run: |
+          call pkg\pi.bat --help || exit /b 1
+          mkdir stub
+          >stub\mintty.bat echo @echo off
+          >>stub\mintty.bat echo exit /b 0
+          set "PATH=%CD%\stub;%PATH%"
+          set "TERM="
+          set "PI_WIN7_NO_MINTTY="
+          call pkg\pi.bat | findstr /c:"[mintty]" >nul || (echo launcher never reached the mintty branch & exit /b 1)
+          set "PI_WIN7_NO_MINTTY=1"
+          call pkg\pi.bat --help || exit /b 1
+
   release:
     needs: verify-windows
     if: startsWith(github.ref, 'refs/tags/win7-v')

@@ -16,20 +16,13 @@ first start.
 
 How to start
 ------------
-1. Install Git for Windows 2.46.2 (the last Windows 7 version). It provides two
-   things Pi needs: the "bash" tool, and mintty, which is a resizable terminal.
-2. Open a command window wide enough and run:
-
-       cd /d/pi-win7-x64
-       ./pi.bat
-
-   The Windows 7 console does render Pi's interface (verified), but at 80 columns
-   it is cramped: paths split mid-word and the status area collides. Use a window
-   at least ~100 columns wide, or mintty (Git Bash), which resizes freely.
-3. If Enter behaves oddly (Shift+Enter submits instead of adding a line), press
-   Ctrl+J for a newline. Windows 7 cannot report modified keys, so Pi never sees
-   the Shift.
-4. First run: /login to connect a provider, then /model to pick a model.
+1. Install Git for Windows 2.46.2 (the last Windows 7 version). Pi needs it for
+   its bash tool, and it also brings mintty.
+2. Run pi.bat. That is the whole procedure. On Windows 7 the launcher widens the
+   window and reopens Pi inside mintty, because the old console cannot report
+   modified keys (Shift+Enter never arrives). If Git is missing, the launcher says
+   so and Pi still starts here - press Ctrl+J for a newline in that window.
+3. First run: /login to connect a provider, then /model to pick a model.
 
 Writing your own extensions
 ---------------------------
@@ -50,8 +43,9 @@ Non-interactive use (works even in a plain cmd.exe window)
 Known limits
 ------------
 * The terminal layer is only partly verified. Rendering and colours work in the
-  Windows 7 console (measured), but modified keys do not, so Shift+Enter is not
-  available (use Ctrl+J). At 80 columns the interface is cramped.
+  Windows 7 console (measured), but modified keys do not, which is why pi.bat
+  reopens itself inside mintty. Without Git, Shift+Enter is unavailable (Ctrl+J
+  inserts a newline) and the window stays 120x34.
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a
   Node runtime instead.

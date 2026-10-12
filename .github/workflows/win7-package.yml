@@ -1,0 +1,116 @@
+name: win7-package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [win7]
+    tags: ['win7-v*']
+
+permissions: {}
+
+concurrency:
+  group: win7-package-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      # 7z unpacks the Node archive and writes the release zip; not preinstalled.
+      - name: Install 7-Zip
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+
+      - name: Build package
+        run: ./scripts/win7/build-package.sh
+
+      - name: Assert package shape
+        run: |
+          set -euo pipefail
+          P=.artifacts/pi-win7-x64
+          test -f "$P/node/node.exe"
+          test -f "$P/agent/bin/rg.exe"
+          test -f "$P/agent/bin/fd.exe"
+          test -f "$P/pi.bat"
+          test -f "$P/verify.ps1"
+          test -f "$P/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+          # esbuild is the only binary in the tree that needs Windows 10 (Go build).
+          test ! -d "$P/pi/node_modules/@esbuild"
+          test -z "$(find "$P" -name 'esbuild*' -print -quit)"
+          # The host's optional platform build must not have leaked in.
+          test -d "$P/pi/node_modules/@earendil-works/pi-tui/native/win32/prebuilds/win32-x64"
+          test ! -d "$P/pi/node_modules/@earendil-works/pi-tui/native/linux"
+          node "$P/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" --version
+
+      - name: Assert no new Windows 7-unsafe imports
+        run: ./scripts/win7/check-imports.sh .artifacts/pi-win7-x64
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pi-win7-x64
+          path: .artifacts/pi-win7-x64.zip
+
+  # Server 2022 is the oldest Windows GitHub still offers (windows-2019 retired),
+  # so this proves the package is intact, not that Windows 7 runs it.
+  verify-windows:
+    needs: package
+    runs-on: windows-2022
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pi-win7-x64
+
+      - name: Unpack and verify
+        shell: pwsh
+        run: |
+          Expand-Archive pi-win7-x64.zip -DestinationPath pkg
+          ./pkg/verify.ps1
+
+      - name: Assert pi starts
+        shell: pwsh
+        run: |
+          $env:PI_CODING_AGENT_DIR = "$PWD/pkg/agent"
+          $env:PI_OFFLINE = "1"
+          $cli = "pkg/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"
+          & ./pkg/node/node.exe $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "pi --version failed" }
+
+  release:
+    needs: verify-windows
+    if: startsWith(github.ref, 'refs/tags/win7-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pi-win7-x64
+
+      - name: Stage release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # --latest=false: this repository mirrors upstream's releases, and a
+          # Windows 7 package must never take over the "Latest" slot.
+          gh release create "$GITHUB_REF_NAME" \
+            --latest=false \
+            --title "Pi for Windows 7 — $GITHUB_REF_NAME" \
+            --notes "Self-contained Pi for Windows 7 SP1 x64. Unzip and run pi.bat from mintty or ConEmu; see README.txt inside.
+
+          Windows 7 no longer receives security updates, and the bundled Node runtime is a community build (see node/SOURCES.txt and CHECKSUMS.txt). The terminal layer is not verified on Windows 7." \
+            ./pi-win7-x64.zip

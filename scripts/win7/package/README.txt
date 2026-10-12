@@ -27,7 +27,10 @@ How to start
    Do NOT double-click pi.bat in Explorer: that opens a cmd.exe window, and the
    Windows 7 console cannot render Pi's interface. Always start it from mintty
    or ConEmu (with "ANSI and xterm sequences" enabled).
-3. First run: /login to connect a provider, then /model to pick a model.
+3. If Enter behaves oddly (Shift+Enter submits instead of adding a line), press
+   Ctrl+J for a newline. Windows 7 cannot report modified keys, so Pi never sees
+   the Shift.
+4. First run: /login to connect a provider, then /model to pick a model.
 
 Writing your own extensions
 ---------------------------

@@ -66,6 +66,20 @@ refreshing.
 
 ## What is verified, and what is not
 
+Verified on real hardware -- Windows 7 Enterprise SP1 (6.1.7601), PowerShell 2.0,
+`verify.ps1` run straight out of the archive:
+
+| Check | Result |
+|---|---|
+| `node --version` | v22.23.2 |
+| `node.exe` sha256 | matches CHECKSUMS.txt |
+| `pi --version` | 1.1.0 |
+| `rg --version` | ripgrep 14.1.0 |
+| `fd --version` | fd 10.3.0 |
+
+The central bet holds: a Node build with the Windows 8+ imports removed does start
+pi on Windows 7, and PowerShell 2.0 runs verify.ps1.
+
 Verified here (no Windows involved):
 
 - `gypfile` count 0; the two wasm deps (`photon-node`, `quickjs-wasi`) are
@@ -76,17 +90,27 @@ Verified here (no Windows involved):
   `win32-platform.node` import nothing newer than Windows Vista.
 - `rg.exe` archive sha256 matches BurntSushi's published `.sha256` sidecar.
 
-Not verified, and not verifiable in CI:
+Still unverified: the TUI itself (see below).
 
-- Whether `node.exe` actually starts on Windows 7, and how the TUI renders in
-  mintty/ConEmu. GitHub's supported self-hosted runners start at Server 2016 and
-  `windows-2019` is retired, so CI's oldest Windows is Server 2022 -- as far from
-  Windows 7 as the developer's own machine.
-- The upstream terminal documentation covers Windows Terminal but has no ConEmu
-  or mintty section, so the terminal layer has no upstream backing at all.
+CI cannot cover any of this: the oldest Windows runner is Server 2022 and
+`windows-2019` is retired, so the Windows job proves the package is intact, not
+that Windows 7 runs it. `verify.ps1` on the real machine is the only evidence.
 
-Run `verify.ps1` (shipped inside the package) on the real machine and paste the
-output into the pull request.
+## Terminal limits on Windows 7
+
+Two separate limits, both in the console's API surface rather than in pi.
+
+Output: Windows 7's console has no ANSI/VT interpreter, and pi never requests
+`ENABLE_VIRTUAL_TERMINAL_PROCESSING` (0x0004). In a `cmd.exe` window pi's escape
+sequences print as literal text. Run `pi.bat` from mintty (Git for Windows 2.46.2)
+or ConEmu, which implement VT themselves.
+
+Input: `packages/tui/native/win32/src/win32-platform.c` enables
+`ENABLE_VIRTUAL_TERMINAL_INPUT` (0x0200), added in Windows 10 1511. On Windows 7
+`SetConsoleMode` rejects it, the helper returns false, and `terminal.ts` ignores
+the result -- so modifier keys arrive stripped and `Shift+Enter` is
+indistinguishable from `Enter`. Use `Ctrl+J` for a newline. No package change can
+fix this.
 
 ## Shipping
 

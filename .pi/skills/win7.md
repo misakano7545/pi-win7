@@ -112,9 +112,15 @@ that result -- modifier keys arrive stripped, so `Shift+Enter` is
 indistinguishable from `Enter`. Use `Ctrl+J` for a newline. No package change can
 fix this.
 
+mintty is bundled but opt-in (`PI_WIN7_MINTTY=1`). It must stay off the default
+path: `mintty -e cmd /c <script>` returns exit code 0 without running the child on
+the CI runner, so any default that routes through it can produce "nothing happens"
+with no error to show. The launcher therefore runs Pi in the current window, which
+is the path verified on real hardware.
+
 Layout: at 80 columns the TUI is cramped -- long paths split mid-word and the
-status area collides. Run it in a window at least ~100 columns wide (cmd.exe
-window properties, or mintty, which is resizable).
+status area collides. `pi.bat` sets 120x34 with `mode con`; if the screen is too
+small for that, the call fails silently and the console keeps its size.
 
 ## Shipping
 

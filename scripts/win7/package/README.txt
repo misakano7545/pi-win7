@@ -18,18 +18,15 @@ first start.
 How to start
 ------------
 1. Run pi.bat. That is the whole procedure: nothing to install first, no admin
-   rights, no registry. On Windows 7 the launcher widens the window and reopens Pi
-   inside the bundled mintty, because the old console cannot report modified keys
-   (Shift+Enter never arrives otherwise).
+   rights, no registry. Pi starts in the window you launched it from.
 2. First run: /login to connect a provider, then /model to pick a model.
 
-If the mintty window never appears, the launcher falls back to running Pi in the
-window it was started from. You can also force that directly:
+Shift+Enter does not work there: the Windows 7 console cannot report modified keys
+(ENABLE_VIRTUAL_TERMINAL_INPUT arrived in Windows 10). Press Ctrl+J for a newline.
+If you want real modified keys, ask for the bundled mintty instead:
 
-       set PI_WIN7_NO_MINTTY=1    (PowerShell: $env:PI_WIN7_NO_MINTTY=1)
+       set PI_WIN7_MINTTY=1       (PowerShell: $env:PI_WIN7_MINTTY=1)
        pi.bat
-
-There, press Ctrl+J for a newline - the old console cannot report Shift+Enter.
 
 Writing your own extensions
 ---------------------------
@@ -50,9 +47,10 @@ Non-interactive use (works even in a plain cmd.exe window)
 Known limits
 ------------
 * The terminal layer is only partly verified. Rendering and colours work in the
-  Windows 7 console (measured), but modified keys do not, which is why pi.bat
-  reopens itself inside the bundled mintty. If mintty is ever removed from the
-  package, Pi still starts in the current window: press Ctrl+J for a newline.
+  Windows 7 console (measured), but modified keys do not, so Shift+Enter is
+  unavailable - press Ctrl+J. The bundled mintty can be requested with
+  PI_WIN7_MINTTY=1, but it is not the default: it exits 0 without running its
+  child in some environments, which would leave pi.bat doing nothing.
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a
   Node runtime instead.

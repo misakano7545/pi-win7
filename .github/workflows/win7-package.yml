@@ -112,5 +112,5 @@ jobs:
             --title "Pi for Windows 7 — $GITHUB_REF_NAME" \
             --notes "Self-contained Pi for Windows 7 SP1 x64. Unzip and run pi.bat from mintty or ConEmu; see README.txt inside.
 
-          Windows 7 no longer receives security updates, and the bundled Node runtime is a community build (see node/SOURCES.txt and CHECKSUMS.txt). The terminal layer is not verified on Windows 7." \
+          Windows 7 no longer receives security updates. The bundled Node runtime is a community build by DeftKing (https://github.com/DeftKing/nodejs-win7) and that project carries no license file - see node/SOURCES.txt and CHECKSUMS.txt. The terminal layer is not verified on Windows 7." \
             ./pi-win7-x64.zip

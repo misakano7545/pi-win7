@@ -53,12 +53,23 @@ Known limits
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a
   Node runtime instead.
-* The Node runtime is a community build (DeftKing/nodejs-win7), not an official
+* The Node runtime is a community build (see Acknowledgements), not an official
   Node.js release. Official Node.js dropped Windows 7 in v20.3.0. See
   CHECKSUMS.txt and node\SOURCES.txt before trusting this package.
 * Updates are disabled (PI_OFFLINE=1). This package is frozen on purpose: newer
   Pi releases raise the Node requirement again.
 * Windows 7 itself no longer receives security updates.
+
+Acknowledgements
+----------------
+
+The bundled Node.js runtime is a community build by DeftKing:
+https://github.com/DeftKing/nodejs-win7
+
+Without it pi could not run on Windows 7 at all - official Node.js dropped
+Windows 7 in v20.3.0. That project carries no license file, so redistributing it
+here is a deliberate choice; node\SOURCES.txt names the exact archive and its
+sha256.
 
 Verification
 ------------

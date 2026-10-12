@@ -101,9 +101,10 @@ that Windows 7 runs it. `verify.ps1` on the real machine is the only evidence.
 Two separate limits, both in the console's API surface rather than in pi.
 
 Output: Windows 7's console has no ANSI/VT interpreter, and pi never requests
-`ENABLE_VIRTUAL_TERMINAL_PROCESSING` (0x0004). In a `cmd.exe` window pi's escape
-sequences print as literal text. Run `pi.bat` from mintty (Git for Windows 2.46.2)
-or ConEmu, which implement VT themselves.
+`ENABLE_VIRTUAL_TERMINAL_PROCESSING` (0x0004). cmd.exe, PowerShell and Explorer
+all host that same console, so pi's escape sequences print as literal text in any
+of them. Run `pi.bat` from mintty (Git for Windows 2.46.2) or ConEmu, which
+implement VT themselves.
 
 Input: `packages/tui/native/win32/src/win32-platform.c` enables
 `ENABLE_VIRTUAL_TERMINAL_INPUT` (0x0200), added in Windows 10 1511. On Windows 7

@@ -24,9 +24,10 @@ How to start
        cd /d/pi-win7-x64
        ./pi.bat
 
-   Do NOT double-click pi.bat in Explorer: that opens a cmd.exe window, and the
-   Windows 7 console cannot render Pi's interface. Always start it from mintty
-   or ConEmu (with "ANSI and xterm sequences" enabled).
+   Do NOT start pi.bat from Explorer, cmd.exe, or PowerShell: all three host the
+   Windows 7 console, which has no ANSI/VT interpreter and cannot render Pi's
+   interface. Start it from mintty (Git Bash) or ConEmu with "ANSI and xterm
+   sequences" enabled.
 3. If Enter behaves oddly (Shift+Enter submits instead of adding a line), press
    Ctrl+J for a newline. Windows 7 cannot report modified keys, so Pi never sees
    the Shift.

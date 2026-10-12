@@ -34,12 +34,15 @@ scan() {
     local pe rel symbols
     while IFS= read -r pe; do
         rel="${pe#"$dir"/}"
-        # Imported names only. The row shape is "<vma> <ordinal> <hint> <name> <addr>";
-        # keying off the ordinal spelling ("<none>") broke on binutils 2.42, so
-        # accept any row whose last field is a name, minus the table headers.
+        # Import rows are "<vma> <ordinal> <hint> <name> [<bound-to>]", but the
+        # ordinal column differs across binutils versions ("<none>" on 2.44, not
+        # on 2.42) and the section headers are not stable either. So: end the DLL
+        # context at any non-indented line (every objdump table header is at
+        # column 0) and take the trailing name field.
         symbols="$(objdump -p "$pe" 2>&1 | awk '
+            /^[^[:space:]]/ { dll = ""; next }
             /DLL Name:/ { dll = $3; next }
-            dll != "" && NF >= 2 && $NF ~ /^[A-Za-z_]/ && $NF != "Member-Name" && $NF != "Bound-To" { print dll "/" $NF }
+            dll != "" && $NF ~ /^[A-Za-z_]/ && $NF != "Member-Name" && $NF != "Bound-To" { print dll "/" $NF }
         ' | sort -u)"
         [[ -n "$symbols" ]] || {
             {

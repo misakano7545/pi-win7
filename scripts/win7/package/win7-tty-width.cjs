@@ -17,6 +17,15 @@
 // the data-property form keeps a setter so Node's own resize writes still land.
 //
 // Loaded with `node --require`, so argv and module resolution stay untouched.
+//
+// Windows 10 and later understand VT output and input and report the mouse, so they draw
+// Pi's frame natively and only the older console needs this. PI_WIN7_CONSOLE_SHIMS=1/0
+// forces the tier on/off.
+const OLD_CONSOLE =
+	process.env.PI_WIN7_CONSOLE_SHIMS === "1" ||
+	(process.env.PI_WIN7_CONSOLE_SHIMS !== "0" &&
+		Number(require("node:os").release().split(".")[0]) < 10);
+if (process.platform !== "win32" || !OLD_CONSOLE) return;
 for (const property of ["columns", "rows"]) {
 	let target = process.stdout;
 	let descriptor;

@@ -67,8 +67,15 @@ also exit 0 without running its child, so the probe is the only reliable way to 
 whether Pi really started. If it did not, pi.bat prints a hint and falls back to the
 console. Set PI_WIN7_CONSOLE=1 (or PI_WIN7_MINTTY=0) to always use the console.
 
+Windows 10 and later need none of this: their console understands VT output and input and
+reports the mouse, so the three console shims do nothing there and mintty is not opened --
+an interactive start runs Pi's own TUI in the console. The tier is read from the OS
+version (10.0 and up is native); set PI_WIN7_CONSOLE_SHIMS=1 to force the compatibility
+path on a newer Windows, or =0 to force it off and compare.
+
 None of the shims touch the pi\ tree, so a Pi upgrade keeps them. The console path
-loads three console shims; under mintty they see a non-TTY pipe and do nothing:
+loads three console shims, which do nothing under mintty (a non-TTY pipe) or on Windows
+10 and later:
 
   win7-tty-width.cjs  reports one column and one row less than the console has.
                       Windows 7 wraps and scrolls as soon as the last cell or the last
@@ -106,9 +113,10 @@ Known limits
 ------------
 * The terminal layer is partly verified and intentionally plain. Measured on Windows 7
   SP1: the interface renders, colours arrive as the console's 16, and Chinese displays.
-  An interactive start uses mintty by default, so mouse-wheel scrolling, truecolour and
-  Shift+Enter work; when mintty cannot run its child (or is absent), pi.bat notices and
-  falls back to the console, where the wheel cannot scroll and PageUp/PageDown do.
+  On Windows 7 an interactive start uses mintty by default, so mouse-wheel scrolling,
+  truecolour and Shift+Enter work; when mintty cannot run its child (or is absent), pi.bat
+  notices and falls back to the console, where the wheel cannot scroll and PageUp/PageDown
+  do. On Windows 10 and later neither is needed: Pi draws its own TUI in the console.
   mintty uses its own font (Windows font linking gives Chinese and Japanese here), so
   a script that font does not cover can show as boxes; set a font fallback in mintty's
   options or set PI_WIN7_CONSOLE=1.

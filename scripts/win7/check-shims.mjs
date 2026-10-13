@@ -4,15 +4,14 @@
  * them shipped broken: the width shim patched only getters, while Node exposes
  * `process.stdout.columns/rows` as instance data properties, so `defineProperty` never
  * matched, the shim did nothing at all, and the garble survived two commits that claimed
- * to fix it. None of that is visible without a Windows 7 machine, so every shim is
+ * to fix it. None of that is visible without a Windows machine, so every shim is
  * exercised here for real rather than trusted to parse.
  *
- * The Windows-only guards these shims open with are configurable, so a preload puts each
- * one into the state it sees on the target -- `process.platform` becomes `win32`, stdout
- * claims to be a TTY or not, `TERM_PROGRAM` says mintty -- which is how the colour,
- * glyph and mintty behaviour is covered without Windows. What cannot be covered here is
- * `git/usr/bin/stty.exe`, the real mintty window and the console's own rendering; those
- * need the target machine.
+ * The guards these shims open with are configurable, so a preload puts each one into the
+ * state it sees on the target: `process.platform`, `process.stdout.isTTY`, the OS version
+ * that decides the console tier, and `TERM_PROGRAM`. That covers the colour, glyph, size
+ * and mintty behaviour off Windows. What cannot be covered here is `git/usr/bin/stty.exe`,
+ * the real mintty window and how either console actually draws; those need the target.
  *
  * Usage: node scripts/win7/check-shims.mjs [package dir]
  *        (default: the source package, scripts/win7/package)
@@ -36,20 +35,31 @@ const SHIMS = [
 /** The console path loads these four; the mintty launcher loads the probe and tty shims itself. */
 const PI_BAT_SHIMS = ["win7-tty-width.cjs", "win7-boxascii.cjs", "win7-ansi16.cjs", "win7-mintty-tty.cjs"];
 
-const WIN32_TTY = `Object.defineProperty(process, "platform", { value: "win32" });
+/**
+ * A console that reports a given OS version, because that version is what puts each
+ * compatibility shim on or off: Windows 7 (6.1) needs them, Windows 10 (10.0) draws the
+ * frame natively. The machine running this check is never the one under test.
+ */
+const WIN32_CONSOLE = (release, extra = "") => `Object.defineProperty(process, "platform", { value: "win32" });
+Object.defineProperty(require("node:os"), "release", { value: () => "${release}", configurable: true });
 Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
-`;
+${extra}`;
+const WIN7 = WIN32_CONSOLE("6.1.7601");
+const WIN10 = WIN32_CONSOLE("10.0.19045");
+const FORCE_ON = 'process.env.PI_WIN7_CONSOLE_SHIMS = "1";\n';
+const FORCE_OFF = 'process.env.PI_WIN7_CONSOLE_SHIMS = "0";\n';
 
 /**
  * The two shapes the console size has had: the accessor Node used to expose, and the
- * instance data property it uses now.
+ * instance data property it uses now. The probe then assigns a column the way Node's own
+ * resize callback does, so an adjusted size reads back one less and an ignored one reads
+ * back exactly what was assigned.
  */
-const SIZE_FORMS = {
-	"data property": `for (const [name, value] of [["columns", 120], ["rows", 33]]) {
+const DATA_PROPERTY = `for (const [name, value] of [["columns", 120], ["rows", 33]]) {
 	Object.defineProperty(process.stdout, name, { value, writable: true, enumerable: true, configurable: true });
 }
-`,
-	accessor: `const stored = { columns: 120, rows: 33 };
+`;
+const ACCESSOR = `const stored = { columns: 120, rows: 33 };
 for (const name of ["columns", "rows"]) {
 	Object.defineProperty(process.stdout, name, {
 		enumerable: true,
@@ -58,24 +68,39 @@ for (const name of ["columns", "rows"]) {
 		set(value) { stored[name] = value; },
 	});
 }
-`,
-};
+`;
+const SIZE_PROBE =
+	"process.stdout.columns = 100;" +
+	"process.stdout.write(JSON.stringify([process.stdout.columns, process.stdout.rows]));";
+
+const WIDTH_CASES = [
+	["adjusts the data-property size on Windows 7", WIN7 + DATA_PROPERTY, "[99,32]"],
+	["adjusts the accessor size on Windows 7", WIN7 + ACCESSOR, "[99,32]"],
+	["leaves a Windows 10 console at its full size", WIN10 + DATA_PROPERTY, "[100,33]"],
+	["applies on Windows 10 when forced with PI_WIN7_CONSOLE_SHIMS=1", WIN10 + FORCE_ON + DATA_PROPERTY, "[99,32]"],
+	["stays off on Windows 7 when told PI_WIN7_CONSOLE_SHIMS=0", WIN7 + FORCE_OFF + DATA_PROPERTY, "[100,33]"],
+];
 
 /**
- * What this console cannot draw, and what it must be handed instead. The CJK text is
+ * What the old console cannot draw, and what it must be handed instead. The CJK text is
  * deliberate: the glyph shim has to leave it alone, and the colour one must not eat the
  * basic SGR the console does understand.
  */
-const TRANSFORMS = [
-	[
-		"win7-ansi16.cjs",
-		"\u001b[38;2;255;0;0mR\u001b[38;5;196mR\u001b[48;5;21mB\u001b[0m\u001b[31mplain\n",
-		"\u001b[91mR\u001b[91mR\u001b[104mB\u001b[0m\u001b[31mplain\n",
-	],
-	["win7-boxascii.cjs", "─│┌▶• 中文测试\n", "-|+>* 中文测试\n"],
+const COLOUR_IN = "\u001b[38;2;255;0;0mR\u001b[38;5;196mR\u001b[48;5;21mB\u001b[0m\u001b[31mplain\n";
+const COLOUR_OUT = "\u001b[91mR\u001b[91mR\u001b[104mB\u001b[0m\u001b[31mplain\n";
+const GLYPHS_IN = "─│┌▶• 中文测试\n";
+const GLYPHS_OUT = "-|+>* 中文测试\n";
+
+const TRANSFORM_CASES = [
+	["win7-ansi16.cjs", "downgrades colour on Windows 7", WIN7, COLOUR_IN, COLOUR_OUT],
+	["win7-ansi16.cjs", "leaves Windows 10 colour alone", WIN10, COLOUR_IN, COLOUR_IN],
+	["win7-ansi16.cjs", "downgrades colour on Windows 10 when forced", WIN10 + FORCE_ON, COLOUR_IN, COLOUR_OUT],
+	["win7-boxascii.cjs", "rewrites glyphs on Windows 7", WIN7, GLYPHS_IN, GLYPHS_OUT],
+	["win7-boxascii.cjs", "leaves Windows 10 glyphs alone", WIN10, GLYPHS_IN, GLYPHS_IN],
+	["win7-boxascii.cjs", "rewrites glyphs on Windows 10 when forced", WIN10 + FORCE_ON, GLYPHS_IN, GLYPHS_OUT],
 ];
 
-/** Read back what the TTY shim decided, for the three states it has to tell apart. */
+/** Read back what the TTY shim decided, for the states it has to tell apart. */
 const TTY_STATE = `process.stdout.write(JSON.stringify([
 	String(process.stdout.isTTY),
 	String(process.stdout.columns),
@@ -85,9 +110,10 @@ const TTY_STATE = `process.stdout.write(JSON.stringify([
 ]));`;
 
 /**
- * The TTY shim has to fire under mintty and nowhere else: firing in a real console would
- * replace its size, and staying inert under mintty is the black window. `stty` is absent
- * here, so the size falls back to COLUMNS/LINES, which keeps the cases meaningful.
+ * The TTY shim is the one shim that is not about the console: native Node sees mintty's
+ * MSYS pty as a pipe on any Windows version, so it has to fire under mintty there and
+ * stay out of the way everywhere else. `stty` is absent here, so the size falls back to
+ * COLUMNS/LINES, which keeps the cases meaningful.
  */
 const TTY_CASES = [
 	{
@@ -146,6 +172,22 @@ function probe(preload, shim, script) {
 	});
 }
 
+/** Compare what one shim turns into what that console must get. */
+function expectTransform([shim, what, preload, input, expected]) {
+	let got;
+	try {
+		got = probe(preload, shim, `process.stdout.write(${JSON.stringify(input)});`);
+	} catch (error) {
+		check(`${shim} ${what}`, false, reason(error));
+		return;
+	}
+	check(
+		`${shim} ${what}`,
+		got === expected,
+		got === expected ? "" : `got ${JSON.stringify(got)}, want ${JSON.stringify(expected)}`,
+	);
+}
+
 try {
 	for (const shim of SHIMS) {
 		const path = join(dir, shim);
@@ -161,13 +203,17 @@ try {
 		}
 	}
 
-	// pi.bat is the only entry point a user runs, so it must load every shim of the
-	// console path, and the launcher must load the two mintty ones by exact filename: a
-	// typo there is a black mintty window that no CI machine can show.
+	// pi.bat is the only entry point a user runs, so it must load every shim of the console
+	// path, decide the console tier and gate mintty on it. The launcher must load the two
+	// mintty shims by exact filename: a typo there is a black mintty window that no CI
+	// machine can show.
 	const launcher = source("pi.bat");
 	for (const shim of PI_BAT_SHIMS) {
 		check(`pi.bat loads ${shim}`, launcher.includes(`--require "%ROOT%${shim}"`));
 	}
+	check("pi.bat asks the OS for the console tier", launcher.includes("os').release()"));
+	check("pi.bat hands the tier to the shims", launcher.includes('set "PI_WIN7_CONSOLE_SHIMS=1"'));
+	check("pi.bat opens mintty on the old console tier only", launcher.includes('if "%PI_WIN7_CONSOLE_SHIMS%"=="1"'));
 	const mintty = source("win7-mintty-launch.cjs");
 	for (const shim of ["win7-mintty-probe.cjs", "win7-mintty-tty.cjs"]) {
 		check(`the mintty launcher loads ${shim}`, mintty.includes(`"${shim}"`));
@@ -179,35 +225,19 @@ try {
 	const started = spawnSync(node, [resolve(dir, "win7-mintty-launch.cjs")], { encoding: "utf8" });
 	check("the mintty launcher rejects a missing CLI path", started.status === 2, `exit ${started.status}`);
 
-	for (const [form, preload] of Object.entries(SIZE_FORMS)) {
-		// Read the size back, then assign one the way Node's own resize callback does: the
-		// shim must adjust the first and still let the second through.
-		const script =
-			"process.stdout.columns = 100;" +
-			"process.stdout.write(JSON.stringify([process.stdout.columns, process.stdout.rows]));";
+	for (const [what, preload, expected] of WIDTH_CASES) {
 		let got;
 		try {
-			got = probe(preload, "win7-tty-width.cjs", script).trim();
+			got = probe(preload, "win7-tty-width.cjs", SIZE_PROBE).trim();
 		} catch (error) {
-			check(`width shim adjusts the ${form}`, false, reason(error));
+			check(`width shim ${what}`, false, reason(error));
 			continue;
 		}
-		check(`width shim adjusts the ${form}`, got === "[99,32]", `120x33 -> ${got}, want [99,32]`);
+		check(`width shim ${what}`, got === expected, got === expected ? "" : `120x33 -> ${got}, want ${expected}`);
 	}
 
-	for (const [shim, input, expected] of TRANSFORMS) {
-		let got;
-		try {
-			got = probe(WIN32_TTY, shim, `process.stdout.write(${JSON.stringify(input)});`);
-		} catch (error) {
-			check(`${shim} rewrites what the console cannot draw`, false, reason(error));
-			continue;
-		}
-		check(
-			`${shim} rewrites what the console cannot draw`,
-			got === expected,
-			got === expected ? "" : `got ${JSON.stringify(got)}, want ${JSON.stringify(expected)}`,
-		);
+	for (const entry of TRANSFORM_CASES) {
+		expectTransform(entry);
 	}
 
 	for (const { what, preload, expected } of TTY_CASES) {

@@ -19,7 +19,15 @@
 //
 // Loaded with `node --require` on the console path only; mintty is a real pty with a
 // single-cell font and must not load it. Set PI_WIN7_BOXASCII=0 to disable.
-if (process.platform === "win32" && process.stdout.isTTY && process.env.PI_WIN7_BOXASCII !== "0") {
+//
+// Windows 10 and later draw box drawing properly, so this belongs to the older console.
+// PI_WIN7_CONSOLE_SHIMS=1/0 forces the tier on/off.
+const OLD_CONSOLE =
+	process.env.PI_WIN7_CONSOLE_SHIMS === "1" ||
+	(process.env.PI_WIN7_CONSOLE_SHIMS !== "0" &&
+		Number(require("node:os").release().split(".")[0]) < 10);
+if (process.platform !== "win32" || !OLD_CONSOLE) return;
+if (process.stdout.isTTY && process.env.PI_WIN7_BOXASCII !== "0") {
 	// Everything this shim rewrites. AMBIGUOUS is global so replace() rewrites every
 	// match; HAS_AMBIGUOUS is a separate stateless copy for the fast path, because a
 	// /g regex carries lastIndex between calls.

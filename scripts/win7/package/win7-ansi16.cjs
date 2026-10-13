@@ -11,7 +11,15 @@
 //
 // Loaded with `node --require`, so it only affects the console path: mintty is a real
 // pty and must not load it. Set PI_WIN7_ANSI16=0 to disable.
-if (process.platform === "win32" && process.stdout.isTTY && process.env.PI_WIN7_ANSI16 !== "0") {
+//
+// Windows 10 and later draw true colour natively, so the downgrade belongs to the older
+// console. PI_WIN7_CONSOLE_SHIMS=1/0 forces the tier on/off.
+const OLD_CONSOLE =
+	process.env.PI_WIN7_CONSOLE_SHIMS === "1" ||
+	(process.env.PI_WIN7_CONSOLE_SHIMS !== "0" &&
+		Number(require("node:os").release().split(".")[0]) < 10);
+if (process.platform !== "win32" || !OLD_CONSOLE) return;
+if (process.stdout.isTTY && process.env.PI_WIN7_ANSI16 !== "0") {
 	const PALETTE = [
 		[0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
 		[0, 0, 128], [128, 0, 128], [0, 128, 128], [192, 192, 192],

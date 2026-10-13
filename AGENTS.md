@@ -122,9 +122,9 @@ For release preparation, publishing, verification, or recovery, load and follow 
 
 ## Windows 7 distribution
 
-The Windows 7 package is built from `main`; the `win7` branch is fully merged and has
-nothing of its own. For building, shipping, or changing that package, load and follow
-[.pi/skills/win7.md](.pi/skills/win7.md).
+The Windows 7 package is built from `main`, this fork's only branch (upstream's branches
+are reachable through the `upstream` remote, not copied here). For building, shipping, or
+changing that package, load and follow [.pi/skills/win7.md](.pi/skills/win7.md).
 
 ## User Override
 

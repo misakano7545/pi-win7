@@ -8,8 +8,10 @@ description: Build and ship the Windows 7 distribution of pi. Use when touching 
 Work on `main`. It is a fork of upstream (`earendil-works/pi`) that also carries the
 Windows 7 package, so keep every Windows 7 change inside `scripts/win7/`,
 `.pi/skills/win7.md` and the win7-package workflow: that is what keeps
-`git fetch upstream && git merge upstream/main` conflict-free. `win7-package.yml` runs on
-`main` too, and the `win7` branch is fully merged and has no commits of its own.
+`git fetch upstream && git merge upstream/main` conflict-free. `win7-package.yml` builds
+on `main`; the fork keeps no other branch: the one-off `win7` branch it was developed on
+is gone, and upstream's branches were dropped from the fork (the `upstream` remote still
+has them).
 
 ## Why a separate package exists
 

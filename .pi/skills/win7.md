@@ -113,32 +113,47 @@ unaided: Pi classifies every `win32` console as truecolour, and
 colours render correctly and that Node reports 80x25 -- was wrong; do not repeat it.
 
 Two limits come from the console's API surface rather than from pi: the drawing ones are
-worked around by the shims below, the input one cannot be.
+worked around by the shims below, and the input ones are why an interactive start uses
+mintty.
 
 Input: `packages/tui/native/win32/src/win32-platform.c` enables
 `ENABLE_VIRTUAL_TERMINAL_INPUT` (0x0200), added in Windows 10 1511. On Windows 7
 `SetConsoleMode` rejects it, the helper returns false, and `terminal.ts` ignores
 that result -- modifier keys arrive stripped, so `Shift+Enter` is
-indistinguishable from `Enter`. Use `Ctrl+J` for a newline. No package change can
-fix this.
+indistinguishable from `Enter`. No package change can fix this. mintty is a real pty
+and reports `\x1b[13;2u`, so the binding works there.
 
-## Open question: mintty opens but starts nothing
+Mouse: the console never delivers mouse input to a Node process. libuv reads only
+`KEY_EVENT` records, and Win7 conhost ignores the xterm mouse modes Pi writes when it
+enters the alt screen (`?1000h`, `?1002h`, `?1003h`, `?1004h`, `?1006h`), so the wheel
+cannot scroll the transcript; `node.exe` carries no mouse escape sequence and no
+`ENABLE_MOUSE_INPUT`. mintty reports SGR wheel events (`\x1b[<64;...M`), which is the
+whole reason it is now the default. In the console, PageUp/PageDown scroll instead --
+libuv translates them to `\x1b[5~` / `\x1b[6~`.
 
-On the real machine `mintty.exe <node.exe> <cli.js>` produces a window whose title is
-the command line (so mintty received it) and an empty body. Empty plus a window that
-stays open is mintty's "could not execute the program" case, but the candidates are
-eliminated: the paths have no spaces, the archive ships `git/etc/passwd` (10 entries,
-asserted in CI), and the same node.exe plus cli.js runs fine in the console. The
-runner cannot help -- without an interactive desktop mintty exits in about half a
-second -- so this is only diagnosable on the target.
+## mintty is the interactive default
 
-The console route stays the default and works; only multi-line input is unavailable
-there.
+An interactive start with no arguments, and with `TERM` unset, opens Pi in the bundled
+mintty: it is the only way to get mouse-wheel scrolling, `Shift+Enter` and truecolour on
+Windows 7. `PI_WIN7_CONSOLE=1` (or `PI_WIN7_MINTTY=0`) keeps the console path, where
+PageUp/PageDown scroll and there is no newline key.
 
-The package ships three shims, all loaded with `node --require` on the console path
-only; mintty is a real pty and gets none of them. None of them touch `node_modules`, so
-a Pi upgrade keeps them, and `scripts/win7/check-shims.mjs` asserts in CI that they ship,
-parse, are loaded by `pi.bat` and still adjust the console size.
+Never infer success from mintty's exit status: it returns in about 30ms because its
+window is a separate process, and it can exit 0 without ever starting its child -- the
+"mintty opens but starts nothing" question this file used to leave open. `pi.bat`
+therefore goes through `win7-mintty-launch.cjs`, which writes a probe file and watches
+for `win7-mintty-probe.cjs`, loaded in the child, to delete it. A probe that survives the
+timeout (8s -- antivirus scanning `node.exe` delays the first start) means mintty
+failed: the launcher exits 1 and `pi.bat` prints a hint and falls back to the console.
+CI cannot test any of it: mintty needs an interactive desktop.
+
+The package ships six shims. Four load on the console path: the three drawing ones, and
+`win7-mintty-tty.cjs`, which is inert in a real console and matters when that path runs
+inside an existing mintty; the mintty launcher loads the TTY and probe shims itself. None
+of them touch `node_modules`, so a Pi upgrade keeps them, and
+`scripts/win7/check-shims.mjs` asserts in CI that all six ship, parse, are wired up
+correctly, adjust the console size, rewrite the colour and the glyphs, and fire only in
+the state they are meant to.
 
 `win7-tty-width.cjs` reports one less column and one less row so Pi never touches either
 edge. Windows 7's console wraps and scrolls as soon as the last cell or the last row is
@@ -177,6 +192,25 @@ The colour and glyph shims take `PI_WIN7_ANSI16=0` / `PI_WIN7_BOXASCII=0` to com
 against the old behaviour, and none of the three applies when stdout is redirected, so
 `--mode json` output stays clean.
 
+Under mintty, native Windows Node sees the MSYS pty as a pair of named pipes: stdout's
+constructor is `Socket`, and `isTTY`, `columns`, `rows`, `setRawMode` and `isRaw` do not
+exist. Pi's `resolveAppMode()` then picks `print` and waits for piped input forever --
+that, not the launcher, was the black window. Two more causes sit behind it: the pty
+stays in canonical mode, so typing arrives only after Enter and SGR mouse reports, which
+carry no newline, never arrive at all (`stty raw -echo` fixes it; `stty -a` then shows
+`-icanon -echo -isig`); and mintty itself never waits for its child.
+
+`win7-mintty-tty.cjs` presents the pty as a TTY: size from MSYS `stty size`, raw mode
+through `stty raw -echo` / `stty sane` behind `setRawMode`, and a 1s `stty size` poll
+that emits `resize`. It activates only for `TERM_PROGRAM=mintty` with a non-TTY stdout,
+so a real console and redirected output are untouched -- and a rerun of `pi.bat` from
+inside an existing mintty still starts interactive. `stty` always runs with `cwd` in the
+temp directory, so an MSYS `*.stackdump` cannot land in the user's project.
+
+`win7-mintty-launch.cjs` + `win7-mintty-probe.cjs` are the launcher and its probe. In a
+read-only package folder the launcher cannot write a probe, so it starts mintty anyway
+and trusts it -- the best it can do without one.
+
 The package ships `agent/settings.json` with `terminal.clearOnShrink: true`: the
 console does not repaint rows the frame stopped using, so a line the editor vacated
 (an input row the console's stray bytes created) lingers for the whole session.
@@ -190,11 +224,13 @@ console -- so the stray byte must be a line feed. The package therefore ships
 Cost, stated plainly: the console then has no newline key at all. There is no free
 Ctrl+<letter> to reassign -- the unused ones are Ctrl+H, Ctrl+I and Ctrl+M, which are
 Backspace, Tab and Enter -- and the remaining modifier combinations do not survive
-this console either. Multi-line prompts require mintty.
+this console either. That is the fallback's cost only: the default path is mintty, where
+`Shift+Enter` works.
 
 Layout: at 80 columns the TUI is cramped -- long paths split mid-word and the
-status area collides. `pi.bat` sets 120x34 with `mode con`; if the screen is too
-small for that, the call fails silently and the console keeps its size.
+status area collides. `pi.bat` sets 120x34 with `mode con`, and the mintty launcher opens
+its window at the same size with `-s 120,34`; if the screen is too small for that, the
+`mode con` call fails silently and the console keeps its size.
 
 ## Shipping
 

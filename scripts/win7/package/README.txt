@@ -18,17 +18,22 @@ first start.
 How to start
 ------------
 1. Run pi.bat. That is the whole procedure: nothing to install first, no admin
-   rights, no registry. Pi starts in the window you launched it from.
+   rights, no registry. Pi starts in the bundled mintty terminal.
 2. First run: /login to connect a provider, then /model to pick a model.
 
-Shift+Enter does not work in that window: the Windows 7 console cannot report
-modified keys (ENABLE_VIRTUAL_TERMINAL_INPUT arrived in Windows 10), and Ctrl+J is
-deliberately unbound in agent\keybindings.json because this console emits stray line
-feeds that Pi would otherwise read as Ctrl+J and turn into blank lines of their own.
-That leaves the console without a newline key, which is the lesser evil; multi-line
-prompts need the bundled mintty instead:
+An interactive start opens Pi in git\usr\bin\mintty.exe, the bundled terminal. Two
+Windows 7 console limits make that the useful default: the console never reports
+mouse events to a Node process (only key events reach stdin) and ignores the xterm
+mouse modes Pi enables, so the mouse wheel cannot scroll the transcript there; and it
+cannot report modified keys (ENABLE_VIRTUAL_TERMINAL_INPUT arrived in Windows 10), so
+Shift+Enter never arrives. Ctrl+J is deliberately unbound in agent\keybindings.json
+because this console emits stray line feeds that Pi would otherwise read as Ctrl+J and
+turn into blank lines of their own, which leaves the console without a newline key.
+mintty is a real pty and fixes all three - mouse-wheel scrolling, Shift+Enter and
+truecolour. To stay in the plain console instead, where PageUp/PageDown scroll the
+transcript:
 
-       set PI_WIN7_MINTTY=1       (PowerShell: $env:PI_WIN7_MINTTY=1)
+       set PI_WIN7_CONSOLE=1       (PowerShell: $env:PI_WIN7_CONSOLE=1)
        pi.bat
 
 Writing your own extensions
@@ -54,9 +59,16 @@ mid-word) and points Pi at agent\settings.json, which sets
 terminal.clearOnShrink so rows the interface stops using do not stay on screen.
 agent\keybindings.json drops Ctrl+J from the newline binding; see above.
 
-The console path also loads three shims with node --require. None of them touch the
-pi\ tree, so a Pi upgrade keeps them, and mintty is a real pty, so it loads none of
-them:
+An interactive start without arguments, and with TERM unset so Pi is not already in a
+pty, opens Pi in mintty at 120x34. win7-mintty-launch.cjs starts mintty with two
+shims loaded with node --require and waits for the probe shim to delete a probe file:
+mintty always returns immediately because its window is a separate process, and it can
+also exit 0 without running its child, so the probe is the only reliable way to tell
+whether Pi really started. If it did not, pi.bat prints a hint and falls back to the
+console. Set PI_WIN7_CONSOLE=1 (or PI_WIN7_MINTTY=0) to always use the console.
+
+None of the shims touch the pi\ tree, so a Pi upgrade keeps them. The console path
+loads three console shims; under mintty they see a non-TTY pipe and do nothing:
 
   win7-tty-width.cjs  reports one column and one row less than the console has.
                       Windows 7 wraps and scrolls as soon as the last cell or the last
@@ -77,14 +89,29 @@ The two colour and glyph shims have a switch for comparison runs
 (PI_WIN7_BOXASCII=0, PI_WIN7_ANSI16=0), and neither applies when the output is
 redirected to a file.
 
+The two mintty shims:
+
+  win7-mintty-tty.cjs   makes the MSYS pty look like a TTY. Native Windows Node sees
+                        mintty's stdin and stdout as named pipes (isTTY is undefined),
+                        so without this Pi starts in print mode and waits for piped
+                        input forever - the black mintty window. The shim also reads
+                        the pty size from MSYS stty, switches the pty to raw input
+                        (otherwise the line discipline buffers every key and mouse
+                        report until Enter), and emits resize events so Pi reflows
+                        when the window is resized.
+  win7-mintty-probe.cjs deletes a temp file once the child really starts, so the
+                        launcher can tell mintty succeeded; it does nothing else.
+
 Known limits
 ------------
 * The terminal layer is partly verified and intentionally plain. Measured on Windows 7
   SP1: the interface renders, colours arrive as the console's 16, and Chinese displays.
-  That console has no VT support and cannot report modified keys, so Shift+Enter is
-  unavailable and the console has no newline key - see above. For truecolour and
-  Shift+Enter set PI_WIN7_MINTTY=1, but mintty is not the default: it exits 0 without
-  running its child in some environments, which would leave pi.bat doing nothing.
+  An interactive start uses mintty by default, so mouse-wheel scrolling, truecolour and
+  Shift+Enter work; when mintty cannot run its child (or is absent), pi.bat notices and
+  falls back to the console, where the wheel cannot scroll and PageUp/PageDown do.
+  mintty uses its own font (Windows font linking gives Chinese and Japanese here), so
+  a script that font does not cover can show as boxes; set a font fallback in mintty's
+  options or set PI_WIN7_CONSOLE=1.
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a
   Node runtime instead.

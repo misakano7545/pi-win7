@@ -45,6 +45,8 @@ foreach ($t in @("rg", "fd")) {
 
 Write-Host ""
 Write-Host "--- manual step this script cannot do for you ---"
-Write-Host "  Run pi.bat in the console and confirm the input box, the footer and Chinese text."
-Write-Host "  The pi --version check above runs node directly, so it loads none of the three"
-Write-Host "  console shims pi.bat passes with --require; judge the interface through pi.bat."
+Write-Host "  Run pi.bat and confirm the input box, the footer and Chinese text, and that the"
+Write-Host "  mouse wheel scrolls the transcript. An interactive start opens mintty by default;"
+Write-Host "  PI_WIN7_CONSOLE=1 keeps it in this console instead. The pi --version check above"
+Write-Host "  runs node directly, so it loads none of the shims pi.bat passes with --require;"
+Write-Host "  judge the interface through pi.bat."

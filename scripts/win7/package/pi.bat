@@ -11,17 +11,19 @@ set "PI_OFFLINE=1"
 set "PATH=%ROOT%node;%ROOT%git\cmd;%ROOT%git\usr\bin;%PATH%"
 
 rem Windows 7's console cannot report modified keys (ENABLE_VIRTUAL_TERMINAL_INPUT
-rem does not exist before Windows 10) and echoes stray bytes into Pi's input, so
-rem Shift+Enter never arrives and typing can insert a line of its own. mintty is a
-rem real pty and fixes both, but it stays opt-in until it is confirmed on the target.
-if "%~1"=="" if defined PI_WIN7_MINTTY if not defined TERM if exist "%ROOT%git\usr\bin\mintty.exe" (
+rem does not exist before Windows 10), never reports mouse events to a Node process
+rem (only key events reach stdin) and ignores the xterm mouse modes Pi enables, so
+rem Shift+Enter never arrives, typing can insert a line of its own, and the mouse
+rem wheel cannot scroll the transcript. mintty is a real pty and fixes all three, so
+rem an interactive start uses it by default. Set PI_WIN7_CONSOLE=1 (or
+rem PI_WIN7_MINTTY=0) to stay in the console, where PageUp/PageDown scroll instead.
+if "%~1"=="" if not defined PI_WIN7_CONSOLE if not "%PI_WIN7_MINTTY%"=="0" if not defined TERM if exist "%ROOT%git\usr\bin\mintty.exe" (
   echo [mintty] opening Pi in mintty
-  rem Pass node and the entry script directly: msys rewrites "/"-prefixed arguments,
-  rem so routing this through `cmd /c <script>` silently runs nothing.
-  start /wait "" "%ROOT%git\usr\bin\mintty.exe" "%ROOT%node\node.exe" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js"
-  rem 255 is mintty's own "could not execute the program" status.
-  if errorlevel 255 (
-    echo [hint] mintty could not start the program; running Pi in this window instead.
+  rem mintty always returns immediately, so the launcher starts it and watches the
+  rem probe file that win7-mintty-probe.cjs deletes once the child really runs.
+  "%ROOT%node\node.exe" "%ROOT%win7-mintty-launch.cjs" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js"
+  if errorlevel 1 (
+    echo [hint] mintty did not start Pi; running Pi in this window instead.
   ) else (
     exit /b 0
   )
@@ -31,10 +33,12 @@ rem A full-screen TUI needs room: at the console default of 80 columns long path
 rem split mid-word and the status area collides.
 mode con cols=120 lines=34 >nul 2>nul
 
-rem The console path needs all three shims; mintty above is a real pty and needs
-rem none of them. win7-tty-width keeps Pi off the last cell and last row this
-rem console scrolls on, win7-boxascii draws the borders in one-column ASCII (a 936
-rem code page renders them full-width and wraps the input box), and win7-ansi16
-rem downgrades colour to the 16 this console has.
-"%ROOT%node\node.exe" --require "%ROOT%win7-tty-width.cjs" --require "%ROOT%win7-boxascii.cjs" --require "%ROOT%win7-ansi16.cjs" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
+rem The console path loads the three console shims first, then the TTY shim:
+rem win7-tty-width keeps Pi off the last cell and last row this console scrolls on,
+rem win7-boxascii draws the borders in one-column ASCII (a 936 code page renders
+rem them full-width and wraps the input box), and win7-ansi16 downgrades colour to
+rem the 16 this console has. win7-mintty-tty.cjs does nothing in a real console; it
+rem only activates when this path runs inside mintty, where the three see a non-TTY
+rem and skip, so Pi still starts interactive there.
+"%ROOT%node\node.exe" --require "%ROOT%win7-tty-width.cjs" --require "%ROOT%win7-boxascii.cjs" --require "%ROOT%win7-ansi16.cjs" --require "%ROOT%win7-mintty-tty.cjs" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
 exit /b %ERRORLEVEL%

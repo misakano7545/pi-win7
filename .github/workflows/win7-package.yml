@@ -45,6 +45,9 @@ jobs:
           test -f "$P/win7-tty-width.cjs"
           test -f "$P/win7-boxascii.cjs"
           test -f "$P/win7-ansi16.cjs"
+          test -f "$P/win7-mintty-launch.cjs"
+          test -f "$P/win7-mintty-probe.cjs"
+          test -f "$P/win7-mintty-tty.cjs"
           test -f "$P/agent/settings.json"
           test -f "$P/agent/keybindings.json"
           test -f "$P/git/usr/bin/bash.exe"
@@ -171,5 +174,5 @@ jobs:
             --title "Pi for Windows 7 — $GITHUB_REF_NAME" \
             --notes "Self-contained Pi for Windows 7 SP1 x64. Unzip and run pi.bat from mintty or ConEmu; see README.txt inside.
 
-          Windows 7 no longer receives security updates. The bundled Node runtime is a community build by DeftKing (https://github.com/DeftKing/nodejs-win7) and that project carries no license file - see node/SOURCES.txt and CHECKSUMS.txt. The terminal layer is not verified on Windows 7." \
+          Windows 7 no longer receives security updates. The bundled Node runtime is a community build by DeftKing (https://github.com/DeftKing/nodejs-win7) and that project carries no license file - see node/SOURCES.txt and CHECKSUMS.txt. The terminal layer is measured on Windows 7 SP1: an interactive start runs in the bundled mintty (mouse wheel, Shift+Enter, truecolour), and the console fallback is 16-colour with ASCII borders and PageUp/PageDown scrolling." \
             ./pi-win7-x64.zip

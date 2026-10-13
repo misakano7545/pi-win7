@@ -1,0 +1,101 @@
+name: upstream-sync
+
+# The Windows 7 support here is an add-on layer, not a fork of pi's source: the shipped
+# package installs pi from the npm pin in scripts/win7/build-package.sh, so a sync cannot
+# change what users download. What it buys is that `git merge upstream/main` stays cheap and
+# the day a Windows 7-compatible pi is released, bumping the pin is a one-line change.
+#
+# It never pushes main. A clean merge is verified (package build, import baseline, shims)
+# and then offered as a pull request; a conflict fails the run with the file list instead.
+on:
+  schedule:
+    # Mondays 03:00 UTC, 11:00 in CST, so a failed sync is waiting at the start of the week.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      BRANCH: upstream-sync
+    steps:
+      # Unlike every other workflow here, this one pushes, so it keeps the token in the
+      # remote instead of persist-credentials: false.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
+      - name: How far behind is main?
+        id: drift
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/earendil-works/pi.git
+          git fetch --no-tags upstream main
+          behind=$(git rev-list --count "HEAD..upstream/main")
+          echo "behind=$behind" >>"$GITHUB_OUTPUT"
+          echo "upstream/main is $behind commits ahead of main"
+
+      - name: Install 7-Zip
+        if: steps.drift.outputs.behind != '0'
+        run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full
+
+      - name: Merge upstream into the sync branch
+        if: steps.drift.outputs.behind != '0'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          if ! git merge --no-edit upstream/main; then
+            echo "::error::upstream/main does not merge cleanly. These files conflict:"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+
+      # Knowing the package still works is the point of the sync, and the import baseline is
+      # the only automated answer to "will this run on Windows 7". This runs here rather than
+      # as a PR check because a pull request opened with GITHUB_TOKEN triggers no workflows.
+      - name: Verify the package on the merged tree
+        if: steps.drift.outputs.behind != '0'
+        run: |
+          set -euo pipefail
+          ./scripts/win7/build-package.sh
+          ./scripts/win7/check-imports.sh .artifacts/pi-win7-x64
+          node scripts/win7/check-shims.mjs .artifacts/pi-win7-x64
+
+      - name: Offer the merge as a pull request
+        if: steps.drift.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BRANCH" || true
+          git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
+          cat >/tmp/body.md <<'EOF'
+          earendil-works/pi moved on and merged cleanly.
+
+          Verified in this run: build-package.sh, check-imports.sh (import baseline unchanged,
+          which is what says Windows 7 can still load every import) and check-shims.mjs.
+
+          Nothing users download changes until PI_VERSION in scripts/win7/build-package.sh is
+          bumped; this PR only keeps the tree from drifting away from upstream.
+          EOF
+          open=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          if [ -n "$open" ]; then
+            gh pr edit "$open" --body-file /tmp/body.md
+          else
+            gh pr create --base main --head "$BRANCH" --title "chore: sync upstream/main" --body-file /tmp/body.md
+          fi

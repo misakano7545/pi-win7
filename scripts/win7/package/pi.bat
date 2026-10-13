@@ -10,19 +10,19 @@ set "PI_CODING_AGENT_DIR=%ROOT%agent"
 set "PI_OFFLINE=1"
 set "PATH=%ROOT%node;%ROOT%git\cmd;%ROOT%git\usr\bin;%PATH%"
 
-rem A full-screen TUI needs room: at the console default of 80 columns long paths
-rem split mid-word and the status area collides.
-mode con cols=120 lines=34 >nul 2>nul
+rem A full-screen TUI needs room: at the console default of 80 columns long paths split
+rem mid-word and the status area collides. Not inside Windows Terminal though: that ignores
+rem app-initiated resizes, so `mode con` would only change the size conhost reports while the
+rem window keeps its own, and Pi would lay its frame out for rows nobody can see
+rem (microsoft/terminal#5094).
+if not defined WT_SESSION mode con cols=120 lines=34 >nul 2>nul
 
 rem Windows 10 and later understand VT output and input, report the mouse and draw box
-rem drawing and true colour properly, so Pi's TUI runs natively there -- but only where the
-rem console gives it the room it asks for: Windows Terminal keeps its own window size, so
-rem the `mode con` above can leave it at 30 rows, where the editor and the working-directory
-rem line are drawn outside the visible area. Everything older, and any console that stayed
-rem that short, needs the compatibility path. Decide once and export
+rem drawing and true colour properly, so Pi's TUI runs natively there: no mintty, no
+rem compatibility shims. Everything older needs both. Decide once and export
 rem PI_WIN7_CONSOLE_SHIMS=1, which is also the switch to force either path by hand.
 if not defined PI_WIN7_CONSOLE_SHIMS (
-  "%ROOT%node\node.exe" -e "const major=Number(require('node:os').release().split('.')[0]);process.exit(major < 10 || process.stdout.rows < 34 ? 0 : 1)"
+  "%ROOT%node\node.exe" -e "process.exit(Number(require('node:os').release().split('.')[0]) < 10 ? 0 : 1)"
   if not errorlevel 1 set "PI_WIN7_CONSOLE_SHIMS=1"
 )
 

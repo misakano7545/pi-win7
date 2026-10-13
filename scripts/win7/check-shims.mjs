@@ -220,7 +220,7 @@ try {
 	check("pi.bat asks the OS for the console tier", launcher.includes("os').release()"));
 	check("pi.bat hands the tier to the shims", launcher.includes('set "PI_WIN7_CONSOLE_SHIMS=1"'));
 	check("pi.bat opens mintty on the compatibility tier", launcher.includes('if "%PI_WIN7_CONSOLE_SHIMS%"=="1"'));
-	check("pi.bat stands down when the console stayed too short", launcher.includes("process.stdout.rows < 34"));
+	check("pi.bat leaves a Windows Terminal window alone", launcher.includes("if not defined WT_SESSION mode con"));
 	const mintty = source("win7-mintty-launch.cjs");
 	for (const shim of ["win7-mintty-probe.cjs", "win7-mintty-tty.cjs"]) {
 		check(`the mintty launcher loads ${shim}`, mintty.includes(`"${shim}"`));

@@ -153,14 +153,20 @@ the last cell on either version; Windows Terminal defers the wrap the way xterm 
 merely pays the blank column and row) and its switch is `PI_WIN7_TTY_WIDTH=0`. The TTY shim
 is not gated either: native Node cannot see mintty's pty as a TTY on any Windows version.
 
-The tier also has a height test, because being new is not enough to host the TUI. Windows
-Terminal keeps its own window size, so `mode con cols=120 lines=34` cannot grow it: the
-console stayed at 30 rows, and Pi's editor and working-directory line were drawn outside the
-visible area -- maximising the window brought both back, which is what identified the cause.
-`pi.bat` therefore asks for 120x34 first and then takes the compatibility path when the
-console is older than 10.0 *or* shorter than 34 rows. Measured: 30 rows breaks, 34 and above
-work; the exact minimum between them was not measured, and mintty always opens at 34 because
-the launcher passes `-s 120,34`.
+Never call `mode con` inside Windows Terminal. WT ignores app-initiated resizes: the call
+changes the size conhost reports and the rows that absolute positioning uses, while the
+window keeps its own, so Pi lays its frame out for rows nobody can see and the bottom of it --
+the editor and the working-directory line -- lands outside the visible area (microsoft/terminal
+#5094 and #11033; the same trap as any `.bat` that sizes the console before launching an app).
+The symptom identifies it: dragging the window puts it right, because a real resize re-syncs
+the two. `pi.bat` therefore skips `mode con` when `WT_SESSION` is set, so only conhost windows
+are resized, and there `mode con` moves the window for real.
+
+Measured: the same package renders the editor, cwd and status correctly in a Windows 10
+conhost window at 32 rows, while a Windows Terminal window at 29 rows showed the editor's top
+border and the status only -- Pi's frame was laid out for about 32 rows. Do not replace this
+with a row-count threshold: 30 rows is plenty once the reported size matches the window, which
+is what the 32-row conhost window demonstrates.
 
 ## mintty is the interactive default
 

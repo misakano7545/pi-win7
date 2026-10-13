@@ -31,6 +31,10 @@ rem A full-screen TUI needs room: at the console default of 80 columns long path
 rem split mid-word and the status area collides.
 mode con cols=120 lines=34 >nul 2>nul
 
-rem The console path needs the width shim; mintty above is a real pty and does not.
-"%ROOT%node\node.exe" --require "%ROOT%win7-tty-width.cjs" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
+rem The console path needs all three shims; mintty above is a real pty and needs
+rem none of them. win7-tty-width keeps Pi off the last cell and last row this
+rem console scrolls on, win7-boxascii draws the borders in one-column ASCII (a 936
+rem code page renders them full-width and wraps the input box), and win7-ansi16
+rem downgrades colour to the 16 this console has.
+"%ROOT%node\node.exe" --require "%ROOT%win7-tty-width.cjs" --require "%ROOT%win7-boxascii.cjs" --require "%ROOT%win7-ansi16.cjs" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
 exit /b %ERRORLEVEL%

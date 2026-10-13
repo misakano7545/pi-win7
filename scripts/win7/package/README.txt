@@ -53,17 +53,37 @@ pi.bat sizes the window to 120x34 (the console default of 80 columns splits path
 mid-word) and points Pi at agent\settings.json, which sets
 terminal.clearOnShrink so rows the interface stops using do not stay on screen.
 agent\keybindings.json drops Ctrl+J from the newline binding; see above.
-win7-tty-width.cjs is loaded with node --require and reports one column and one row
-less than the console has: Windows 7 wraps and scrolls as soon as the last cell or the
-last row is written, where xterm waits for the next character, and the difference
-garbles the frame and gives the input box an extra row.
+
+The console path also loads three shims with node --require. None of them touch the
+pi\ tree, so a Pi upgrade keeps them, and mintty is a real pty, so it loads none of
+them:
+
+  win7-tty-width.cjs  reports one column and one row less than the console has.
+                      Windows 7 wraps and scrolls as soon as the last cell or the last
+                      row is written, where xterm waits for the next character, and the
+                      difference garbles the frame and gives the input box an extra row.
+  win7-boxascii.cjs   draws the borders in one-column ASCII. A Chinese, Japanese,
+                      Korean or Traditional code page makes this console render box
+                      drawing and other East Asian "ambiguous width" characters twice
+                      as wide as Pi measures them, which wraps every frame and turns the
+                      input box into a block of lines. The code page itself is left
+                      alone, so Chinese keeps displaying and IME input keeps working.
+  win7-ansi16.cjs     downgrades colour to the 16 the console has. Pi treats every
+                      win32 console as truecolour; this one drops truecolour codes and
+                      misreads 256-colour ones, which is why some colours vanish and
+                      some text turns into inverse blocks.
+
+The two colour and glyph shims have a switch for comparison runs
+(PI_WIN7_BOXASCII=0, PI_WIN7_ANSI16=0), and neither applies when the output is
+redirected to a file.
 
 Known limits
 ------------
-* The terminal layer is only partly verified. Rendering and colours work in the
-  Windows 7 console (measured), but modified keys do not, so Shift+Enter is
-  unavailable and the console has no newline key - see above. The bundled mintty can
-  be requested with PI_WIN7_MINTTY=1, but it is not the default: it exits 0 without
+* The terminal layer is partly verified and intentionally plain. Measured on Windows 7
+  SP1: the interface renders, colours arrive as the console's 16, and Chinese displays.
+  That console has no VT support and cannot report modified keys, so Shift+Enter is
+  unavailable and the console has no newline key - see above. For truecolour and
+  Shift+Enter set PI_WIN7_MINTTY=1, but mintty is not the default: it exits 0 without
   running its child in some environments, which would leave pi.bat doing nothing.
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a

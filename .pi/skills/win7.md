@@ -74,7 +74,7 @@ Verified on real hardware -- Windows 7 Enterprise SP1 (6.1.7601), PowerShell 2.0
 |---|---|
 | `node --version` | v22.23.2 |
 | `node.exe` sha256 | matches CHECKSUMS.txt |
-| `pi --version` | 1.1.0 |
+| `pi --version` | 1.2.0 |
 | `rg --version` | ripgrep 14.1.0 |
 | `fd --version` | fd 10.3.0 |
 
@@ -85,13 +85,14 @@ Verified here (no Windows involved):
 
 - `gypfile` count 0; the two wasm deps (`photon-node`, `quickjs-wasi`) are
   platform-independent.
-- pi tree starts on Node and prints `1.1.0`; `-p` reaches the missing-credential
+- pi tree starts on Node and prints `1.2.0`; `-p` reaches the missing-credential
   path; `list` works after the esbuild strip.
 - Import tables: `node.exe`, `rg.exe`, `fd.exe` and `pi-tui`'s
   `win32-platform.node` import nothing newer than Windows Vista.
 - `rg.exe` archive sha256 matches BurntSushi's published `.sha256` sidecar.
 
-Still unverified: the TUI itself (see below).
+The TUI itself was measured on the target machine with the shims below loaded; see the
+next section. CI still cannot.
 
 CI cannot cover any of this: the oldest Windows runner is Server 2022 and
 `windows-2019` is retired, so the Windows job proves the package is intact, not
@@ -99,11 +100,16 @@ that Windows 7 runs it. `verify.ps1` on the real machine is the only evidence.
 
 ## Terminal behaviour on Windows 7
 
-Measured on the real machine: pi 1.1.0 renders colours and escape sequences
-correctly in the Windows 7 console, and Node reports 80x25 there. So "the old
-console cannot draw the TUI" is wrong -- do not repeat it.
+Measured on the real machine with pi 1.2.0: the console is code page 936, has 16
+colours (`hasColors()=true`, `hasColors(256)=false`, `getColorDepth()=4`) and reports
+120x33 after pi.bat's `mode con`. It has no VT support, so it does not draw Pi's TUI
+unaided: Pi classifies every `win32` console as truecolour, and
+`ReadConsoleOutputAttribute` reads `0x04` red for `31m`, `0x87` (a wrong attribute) for
+`38;5;196m` and `0x07` (dropped) for `38;2;255;0;0m`. The earlier note here -- that
+colours render correctly and that Node reports 80x25 -- was wrong; do not repeat it.
 
-The two limits that are real both come from the console's API surface, not pi:
+Two limits come from the console's API surface rather than from pi: the drawing ones are
+worked around by the shims below, the input one cannot be.
 
 Input: `packages/tui/native/win32/src/win32-platform.c` enables
 `ENABLE_VIRTUAL_TERMINAL_INPUT` (0x0200), added in Windows 10 1511. On Windows 7
@@ -125,15 +131,47 @@ second -- so this is only diagnosable on the target.
 The console route stays the default and works; only multi-line input is unavailable
 there.
 
-The package ships `win7-tty-width.cjs`, loaded with `node --require` on the console
-path only. Windows 7's console wraps and scrolls as soon as the last cell or the last
-row is written, where xterm defers that until the next character; the shim reports one
-less column and one less row so Pi never touches either edge. Without it a full-width
-line scrolls the screen, Pi's model of the screen goes a row out of sync, and the frame
-is drawn garbled -- visibly a missing first character, a duplicated footer, a line
-appearing as you type, and an input box one row too tall. Both edges matter: fixing
-columns alone left the bottom broken. The alt screen attempts the same thing with
-`\x1b[?7l`, which this console ignores. mintty is a real pty and does not get the shim.
+The package ships three shims, all loaded with `node --require` on the console path
+only; mintty is a real pty and gets none of them. None of them touch `node_modules`, so
+a Pi upgrade keeps them, and `scripts/win7/check-shims.mjs` asserts in CI that they ship,
+parse, are loaded by `pi.bat` and still adjust the console size.
+
+`win7-tty-width.cjs` reports one less column and one less row so Pi never touches either
+edge. Windows 7's console wraps and scrolls as soon as the last cell or the last row is
+written, where xterm defers that until the next character. Without it a full-width line
+scrolls the screen, Pi's model of the screen goes a row out of sync, and the frame is
+drawn garbled -- visibly a missing first character, a duplicated footer, a line appearing
+as you type, and an input box one row too tall. Both edges matter: fixing columns alone
+left the bottom broken. The alt screen attempts the same thing with `\x1b[?7l`, which
+this console ignores.
+
+It also has to wrap *data properties*. Node exposes `process.stdout.columns/rows` by
+assigning `this.columns = w` from its window-size callback, not through a getter. The
+first version of this shim patched getters only (`if (!descriptor?.get) continue`), so
+`defineProperty` never matched, the shim did nothing at all, Node kept reporting the full
+console size, and the garble survived two commits that claimed to fix it. Handle both
+shapes, and keep a setter so Node's own resize writes still land.
+
+`win7-boxascii.cjs` exists because code page 936 (and 932, 949, 950) makes this console
+draw East Asian "ambiguous width" characters -- box drawing, blocks, bullets, arrows --
+twice as wide as Pi measures them: on a 120-column console a rule comes back as 60
+characters and wraps, so the input box becomes a block of horizontal lines and the footer
+and status rows shift down. Rewriting those glyphs to one-column ASCII (`+ - | # * < > ^ v`)
+fixes the layout without touching the code page, which is the point: `chcp 437` narrows
+the borders but the console can then no longer display Chinese at all ("中文测试" becomes
+"????"), and Windows 7's UTF-8 code page (65001) draws nothing. There is no code-page
+shim, and adding one back would break Chinese.
+
+`win7-ansi16.cjs` rewrites `38;5;N` and `38;2;r;g;b` to the nearest of the 16 colours the
+console has, weighted for the eye. Pi treats every `win32` console as truecolour, which
+is right for Windows 10 and wrong here: truecolour is dropped and 256-colour lands on a
+wrong attribute, so colours vanish and some text turns into inverse blocks. The console
+path is therefore 16-colour with ASCII borders -- this environment's limit, not a
+regression.
+
+The colour and glyph shims take `PI_WIN7_ANSI16=0` / `PI_WIN7_BOXASCII=0` to compare
+against the old behaviour, and none of the three applies when stdout is redirected, so
+`--mode json` output stays clean.
 
 The package ships `agent/settings.json` with `terminal.clearOnShrink: true`: the
 console does not repaint rows the frame stopped using, so a line the editor vacated

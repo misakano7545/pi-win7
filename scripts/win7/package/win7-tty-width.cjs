@@ -9,6 +9,13 @@
 // cost of a blank column and a blank row. The alt screen tries the same thing for
 // columns with "\x1b[?7l", which this console ignores.
 //
+// Node exposes the console size as an *instance data property* of process.stdout
+// (WriteStream assigns `this.columns = w` from its window-size callback), not as a
+// getter. An earlier version of this shim only patched getters, so it silently did
+// nothing at all -- Node kept reporting the full console size and Pi kept touching
+// both edges, which is why the garble survived. Both forms are handled below, and
+// the data-property form keeps a setter so Node's own resize writes still land.
+//
 // Loaded with `node --require`, so argv and module resolution stay untouched.
 for (const property of ["columns", "rows"]) {
 	let target = process.stdout;
@@ -16,12 +23,32 @@ for (const property of ["columns", "rows"]) {
 	while (target && !(descriptor = Object.getOwnPropertyDescriptor(target, property))) {
 		target = Object.getPrototypeOf(target);
 	}
-	if (!descriptor?.get) continue;
-	Object.defineProperty(process.stdout, property, {
-		configurable: true,
-		get() {
-			const size = descriptor.get.call(this);
-			return typeof size === "number" && size > 1 ? size - 1 : size;
-		},
-	});
+	if (!descriptor) continue;
+
+	const adjust = (value) => (typeof value === "number" && value > 1 ? value - 1 : value);
+
+	if (descriptor.get) {
+		// Accessor form: delegate to the original getter, and keep its setter if it has one.
+		Object.defineProperty(process.stdout, property, {
+			configurable: true,
+			enumerable: descriptor.enumerable,
+			get() {
+				return adjust(descriptor.get.call(this));
+			},
+			set: descriptor.set,
+		});
+	} else {
+		// Data-property form: hold whatever Node writes in `stored`.
+		let stored = descriptor.value;
+		Object.defineProperty(process.stdout, property, {
+			configurable: true,
+			enumerable: descriptor.enumerable,
+			get() {
+				return adjust(stored);
+			},
+			set(value) {
+				stored = value;
+			},
+		});
+	}
 }

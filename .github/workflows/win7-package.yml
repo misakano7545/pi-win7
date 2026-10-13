@@ -43,6 +43,8 @@ jobs:
           test -f "$P/pi.bat"
           test -f "$P/verify.ps1"
           test -f "$P/win7-tty-width.cjs"
+          test -f "$P/win7-boxascii.cjs"
+          test -f "$P/win7-ansi16.cjs"
           test -f "$P/agent/settings.json"
           test -f "$P/agent/keybindings.json"
           test -f "$P/git/usr/bin/bash.exe"
@@ -55,6 +57,12 @@ jobs:
           test -d "$P/pi/node_modules/@earendil-works/pi-tui/native/win32/prebuilds/win32-x64"
           test ! -d "$P/pi/node_modules/@earendil-works/pi-tui/native/linux"
           node "$P/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" --version
+
+      # The width shim shipped broken once: it patched only getters, while Node exposes
+      # process.stdout.columns/rows as instance data properties, so it silently did
+      # nothing and the frame stayed garbled on the target machine.
+      - name: Assert the console shims work
+        run: node scripts/win7/check-shims.mjs .artifacts/pi-win7-x64
 
       - name: Assert no new Windows 7-unsafe imports
         run: ./scripts/win7/check-imports.sh .artifacts/pi-win7-x64

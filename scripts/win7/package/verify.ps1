@@ -45,5 +45,6 @@ foreach ($t in @("rg", "fd")) {
 
 Write-Host ""
 Write-Host "--- manual step this script cannot do for you ---"
-Write-Host "  Start pi.bat inside mintty or ConEmu and confirm the interface renders."
-Write-Host "  A cmd.exe window cannot show it; that is a console limit, not a Pi bug."
+Write-Host "  Run pi.bat in the console and confirm the input box, the footer and Chinese text."
+Write-Host "  The pi --version check above runs node directly, so it loads none of the three"
+Write-Host "  console shims pi.bat passes with --require; judge the interface through pi.bat."

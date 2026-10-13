@@ -18,14 +18,12 @@
 //
 // Loaded with `node --require`, so argv and module resolution stay untouched.
 //
-// Windows 10 and later understand VT output and input and report the mouse, so they draw
-// Pi's frame natively and only the older console needs this. PI_WIN7_CONSOLE_SHIMS=1/0
-// forces the tier on/off.
-const OLD_CONSOLE =
-	process.env.PI_WIN7_CONSOLE_SHIMS === "1" ||
-	(process.env.PI_WIN7_CONSOLE_SHIMS !== "0" &&
-		Number(require("node:os").release().split(".")[0]) < 10);
-if (process.platform !== "win32" || !OLD_CONSOLE) return;
+// Not gated on the console version, unlike the colour and glyph shims: this is the one
+// whose symptom -- the frame drawn a row out of place, so the input box is overwritten --
+// came back on a Windows 11 console with the shim switched off, and conhost scrolls on the
+// last cell on both. Windows Terminal, which defers the wrap the way xterm does, only pays
+// a blank column and row. Set PI_WIN7_TTY_WIDTH=0 to disable.
+if (process.platform !== "win32" || process.env.PI_WIN7_TTY_WIDTH === "0") return;
 for (const property of ["columns", "rows"]) {
 	let target = process.stdout;
 	let descriptor;

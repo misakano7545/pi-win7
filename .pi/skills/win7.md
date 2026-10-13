@@ -131,21 +131,27 @@ cannot scroll the transcript; `node.exe` carries no mouse escape sequence and no
 whole reason it is now the default. In the console, PageUp/PageDown scroll instead --
 libuv translates them to `\x1b[5~` / `\x1b[6~`.
 
-## The console tier: Windows 10 and later run natively
+## The console tier: Windows 10 and later draw the colour natively
 
-The three console shims are gated on the OS version, not just on `win32`: `os.release()`
-major < 10 (Windows 7 is 6.1, 8 is 6.2, 8.1 is 6.3) means the old console, and 10.0 and up
-means a console that understands VT output and input and reports the mouse, so Pi draws its
-own frame there. `pi.bat` decides once with the bundled Node, exports
-`PI_WIN7_CONSOLE_SHIMS=1`, and opens mintty only when that is set; each shim reads the same
-version itself and returns immediately when it is not the old console. Exporting the
-variable also forces the tier on a newer Windows, and `=0` forces it off -- that is the way
-to reproduce either path on a machine you actually have.
+The colour and glyph shims are gated on the OS version, not just on `win32`:
+`os.release()` major < 10 (Windows 7 is 6.1, 8 is 6.2, 8.1 is 6.3) means the old console,
+and 10.0 and up means a console that understands VT output, reports the mouse and draws box
+drawing and true colour properly, so those two stand down there. `pi.bat` decides once with
+the bundled Node, exports `PI_WIN7_CONSOLE_SHIMS=1`, and opens mintty only when that is set;
+each shim reads the same version itself. Exporting the variable forces the tier on a newer
+Windows and `=0` forces it off -- that is how to reproduce either path on a machine you
+actually have.
 
-Not measured: whether the newer conhost still scrolls when the last cell of the last row is
-written. If a Windows 10 machine shows the frame shifting, set `PI_WIN7_CONSOLE_SHIMS=1`;
-the width shim is exactly the fix for it. The TTY shim is deliberately *not* gated: native
-Node cannot see mintty's pty as a TTY on any Windows version.
+The width shim is *not* part of that tier, and gating it there was a mistake worth
+remembering. On a Windows 11 console (`os.release()` 10.0.26300) with the shim switched off,
+the documented Windows 7 symptom came straight back: the input box and the working-directory
+line gone from the bottom, every row above intact. Measured on that machine: the rows the
+missing widgets should occupy were pure background, so nothing was drawn there at all --
+that is a frame one row out of place, not a colour problem, and Pi's own renderer has no
+"hide the editor" path. So the width shim runs on every Windows console (conhost scrolls on
+the last cell on either version; Windows Terminal defers the wrap the way xterm does and
+merely pays the blank column and row) and its switch is `PI_WIN7_TTY_WIDTH=0`. The TTY shim
+is not gated either: native Node cannot see mintty's pty as a TTY on any Windows version.
 
 ## mintty is the interactive default
 
@@ -163,10 +169,11 @@ timeout (8s -- antivirus scanning `node.exe` delays the first start) means mintt
 failed: the launcher exits 1 and `pi.bat` prints a hint and falls back to the console.
 CI cannot test any of it: mintty needs an interactive desktop.
 
-The package ships six shims. Four load on the console path: the three drawing ones (active
-on the old console tier only) and `win7-mintty-tty.cjs`, which is inert in a real console
-and matters when that path runs inside an existing mintty; the mintty launcher loads the
-TTY and probe shims itself. None of them touch `node_modules`, so a Pi upgrade keeps them,
+The package ships six shims. Four load on the console path: the two drawing ones (old
+console tier only), `win7-tty-width.cjs` (every Windows console), and
+`win7-mintty-tty.cjs`, which is inert in a real console and matters when that path runs
+inside an existing mintty; the mintty launcher loads the TTY and probe shims itself. None of
+them touch `node_modules`, so a Pi upgrade keeps them,
 and `scripts/win7/check-shims.mjs` asserts in CI that all six ship, parse, are wired up
 correctly, adjust the console size, rewrite the colour and the glyphs, and fire only in
 the state they are meant to.

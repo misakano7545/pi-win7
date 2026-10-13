@@ -67,15 +67,18 @@ also exit 0 without running its child, so the probe is the only reliable way to 
 whether Pi really started. If it did not, pi.bat prints a hint and falls back to the
 console. Set PI_WIN7_CONSOLE=1 (or PI_WIN7_MINTTY=0) to always use the console.
 
-Windows 10 and later need none of this: their console understands VT output and input and
-reports the mouse, so the three console shims do nothing there and mintty is not opened --
-an interactive start runs Pi's own TUI in the console. The tier is read from the OS
-version (10.0 and up is native); set PI_WIN7_CONSOLE_SHIMS=1 to force the compatibility
-path on a newer Windows, or =0 to force it off and compare.
+Windows 10 and later need none of the colour work: their console understands VT output and
+input and reports the mouse, so the colour and glyph shims do nothing there and mintty is
+not opened -- an interactive start runs Pi's own TUI in the console. The tier is read from
+the OS version (10.0 and up is native); set PI_WIN7_CONSOLE_SHIMS=1 to force the
+compatibility path on a newer Windows, or =0 to force it off and compare. The width shim is
+not part of that tier: conhost scrolls when the last cell of the last row is written on
+Windows 7 and Windows 11 alike, and without the shim Pi's frame lands a row out of place and
+the input box goes with it. Set PI_WIN7_TTY_WIDTH=0 to disable it.
 
 None of the shims touch the pi\ tree, so a Pi upgrade keeps them. The console path
-loads three console shims, which do nothing under mintty (a non-TTY pipe) or on Windows
-10 and later:
+loads three console shims, which do nothing under mintty (a non-TTY pipe); on Windows 10
+and later only the colour and glyph ones stand down:
 
   win7-tty-width.cjs  reports one column and one row less than the console has.
                       Windows 7 wraps and scrolls as soon as the last cell or the last
@@ -92,9 +95,9 @@ loads three console shims, which do nothing under mintty (a non-TTY pipe) or on 
                       misreads 256-colour ones, which is why some colours vanish and
                       some text turns into inverse blocks.
 
-The two colour and glyph shims have a switch for comparison runs
-(PI_WIN7_BOXASCII=0, PI_WIN7_ANSI16=0), and neither applies when the output is
-redirected to a file.
+The colour, glyph and width shims each have a switch for comparison runs
+(PI_WIN7_BOXASCII=0, PI_WIN7_ANSI16=0, PI_WIN7_TTY_WIDTH=0), and none of the three applies
+when the output is redirected to a file.
 
 The two mintty shims:
 
@@ -116,7 +119,8 @@ Known limits
   On Windows 7 an interactive start uses mintty by default, so mouse-wheel scrolling,
   truecolour and Shift+Enter work; when mintty cannot run its child (or is absent), pi.bat
   notices and falls back to the console, where the wheel cannot scroll and PageUp/PageDown
-  do. On Windows 10 and later neither is needed: Pi draws its own TUI in the console.
+  do. On Windows 10 and later no mintty is needed: Pi draws its own TUI in the console,
+  with the width shim still keeping the frame off the edge that scrolls.
   mintty uses its own font (Windows font linking gives Chinese and Japanese here), so
   a script that font does not cover can show as boxes; set a font fallback in mintty's
   options or set PI_WIN7_CONSOLE=1.

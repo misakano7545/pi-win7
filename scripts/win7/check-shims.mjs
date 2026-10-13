@@ -48,6 +48,7 @@ const WIN7 = WIN32_CONSOLE("6.1.7601");
 const WIN10 = WIN32_CONSOLE("10.0.19045");
 const FORCE_ON = 'process.env.PI_WIN7_CONSOLE_SHIMS = "1";\n';
 const FORCE_OFF = 'process.env.PI_WIN7_CONSOLE_SHIMS = "0";\n';
+const WIDTH_OFF = 'process.env.PI_WIN7_TTY_WIDTH = "0";\n';
 
 /**
  * The two shapes the console size has had: the accessor Node used to expose, and the
@@ -73,12 +74,16 @@ const SIZE_PROBE =
 	"process.stdout.columns = 100;" +
 	"process.stdout.write(JSON.stringify([process.stdout.columns, process.stdout.rows]));";
 
+/**
+ * The width shim is the one console shim that is not part of the version tier: conhost
+ * scrolls on the last cell on Windows 7 and on Windows 10/11 alike, and only Windows
+ * Terminal defers it. Its switch is its own.
+ */
 const WIDTH_CASES = [
 	["adjusts the data-property size on Windows 7", WIN7 + DATA_PROPERTY, "[99,32]"],
 	["adjusts the accessor size on Windows 7", WIN7 + ACCESSOR, "[99,32]"],
-	["leaves a Windows 10 console at its full size", WIN10 + DATA_PROPERTY, "[100,33]"],
-	["applies on Windows 10 when forced with PI_WIN7_CONSOLE_SHIMS=1", WIN10 + FORCE_ON + DATA_PROPERTY, "[99,32]"],
-	["stays off on Windows 7 when told PI_WIN7_CONSOLE_SHIMS=0", WIN7 + FORCE_OFF + DATA_PROPERTY, "[100,33]"],
+	["adjusts a Windows 10 console too", WIN10 + DATA_PROPERTY, "[99,32]"],
+	["stays off when told PI_WIN7_TTY_WIDTH=0", WIN10 + WIDTH_OFF + DATA_PROPERTY, "[100,33]"],
 ];
 
 /**
@@ -95,6 +100,7 @@ const TRANSFORM_CASES = [
 	["win7-ansi16.cjs", "downgrades colour on Windows 7", WIN7, COLOUR_IN, COLOUR_OUT],
 	["win7-ansi16.cjs", "leaves Windows 10 colour alone", WIN10, COLOUR_IN, COLOUR_IN],
 	["win7-ansi16.cjs", "downgrades colour on Windows 10 when forced", WIN10 + FORCE_ON, COLOUR_IN, COLOUR_OUT],
+	["win7-ansi16.cjs", "leaves Windows 7 colour alone when told PI_WIN7_CONSOLE_SHIMS=0", WIN7 + FORCE_OFF, COLOUR_IN, COLOUR_IN],
 	["win7-boxascii.cjs", "rewrites glyphs on Windows 7", WIN7, GLYPHS_IN, GLYPHS_OUT],
 	["win7-boxascii.cjs", "leaves Windows 10 glyphs alone", WIN10, GLYPHS_IN, GLYPHS_IN],
 	["win7-boxascii.cjs", "rewrites glyphs on Windows 10 when forced", WIN10 + FORCE_ON, GLYPHS_IN, GLYPHS_OUT],

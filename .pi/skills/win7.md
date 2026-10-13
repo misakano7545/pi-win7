@@ -26,7 +26,7 @@ re-running the checks in this skill.
 | PortableGit `git/` | 2.46.2 | last release supporting Windows 7; supplies bash for Pi's bash tool and mintty, the terminal that can report modified keys |
 | ripgrep `rg.exe` | 14.1.0 | 14.1.1 was built with Rust 1.78, whose Windows targets require Windows 10 |
 | fd `fd.exe` | 10.3.0 | 10.4.0 raised the MSRV to 1.90 and dropped Windows 7 |
-| pi | 1.1.0 | pinned; newer releases raise the Node feature floor again |
+| pi | 1.2.0 | pinned; newer releases raise the Node feature floor again |
 
 pi's real Node floor is 22.12, not the `engines` field's 22.19 -- measured, see
 the table below. Never edit `engines`; it is upstream's publish contract and a

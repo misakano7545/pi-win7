@@ -1,13 +1,15 @@
 ---
 name: win7
-description: Build and ship the Windows 7 distribution of pi. Use when touching scripts/win7, the win7-package workflow, the win7 branch, or anything about running pi on Windows 7.
+description: Build and ship the Windows 7 distribution of pi. Use when touching scripts/win7, the win7-package workflow, or anything about running pi on Windows 7.
 ---
 
 # Windows 7 distribution
 
-Work on the `win7` branch. `main` stays a byte-for-byte mirror of upstream
-(`earendil-works/pi`) so `git fetch upstream && git merge upstream/main` keeps
-working; nothing Windows 7-specific may land on `main`.
+Work on `main`. It is a fork of upstream (`earendil-works/pi`) that also carries the
+Windows 7 package, so keep every Windows 7 change inside `scripts/win7/`,
+`.pi/skills/win7.md` and the win7-package workflow: that is what keeps
+`git fetch upstream && git merge upstream/main` conflict-free. `win7-package.yml` runs on
+`main` too, and the `win7` branch is fully merged and has no commits of its own.
 
 ## Why a separate package exists
 

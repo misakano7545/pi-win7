@@ -18,11 +18,11 @@
 //
 // Loaded with `node --require`, so argv and module resolution stay untouched.
 //
-// Not gated on the console version, unlike the colour and glyph shims: this is the one
-// whose symptom -- the frame drawn a row out of place, so the input box is overwritten --
-// came back on a Windows 11 console with the shim switched off, and conhost scrolls on the
-// last cell on both. Windows Terminal, which defers the wrap the way xterm does, only pays
-// a blank column and row. Set PI_WIN7_TTY_WIDTH=0 to disable.
+// Not gated on the console version, unlike the colour and glyph shims. Measured on Windows 7:
+// conhost scrolls the moment the last cell of the last row is written. That is conhost's
+// behaviour rather than a version's -- Windows Terminal defers the wrap the way xterm does --
+// and keeping Pi off that cell costs one blank column and row. Set PI_WIN7_TTY_WIDTH=0 to
+// disable.
 if (process.platform !== "win32" || process.env.PI_WIN7_TTY_WIDTH === "0") return;
 for (const property of ["columns", "rows"]) {
 	let target = process.stdout;

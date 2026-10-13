@@ -10,15 +10,6 @@ set "PI_CODING_AGENT_DIR=%ROOT%agent"
 set "PI_OFFLINE=1"
 set "PATH=%ROOT%node;%ROOT%git\cmd;%ROOT%git\usr\bin;%PATH%"
 
-rem mintty builds its session from git\etc\passwd and git\etc\group. PortableGit's
-rem self-extractor generates them on unpack; taking the archive apart on Linux skips
-rem that, and msys then has no user or group database to start a session with.
-if not exist "%ROOT%git\etc\passwd" if exist "%ROOT%git\usr\bin\mkpasswd.exe" (
-  if not exist "%ROOT%git\etc" mkdir "%ROOT%git\etc"
-  "%ROOT%git\usr\bin\mkpasswd.exe" -l > "%ROOT%git\etc\passwd" 2>nul
-  "%ROOT%git\usr\bin\mkgroup.exe" -l > "%ROOT%git\etc\group" 2>nul
-)
-
 rem Windows 7's console cannot report modified keys (ENABLE_VIRTUAL_TERMINAL_INPUT
 rem does not exist before Windows 10) and echoes stray bytes into Pi's input, so
 rem Shift+Enter never arrives and typing can insert a line of its own. mintty is a

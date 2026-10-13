@@ -112,15 +112,18 @@ that result -- modifier keys arrive stripped, so `Shift+Enter` is
 indistinguishable from `Enter`. Use `Ctrl+J` for a newline. No package change can
 fix this.
 
-mintty is bundled but opt-in (`PI_WIN7_MINTTY=1`). Two hard-won details:
+## Open question: mintty opens but starts nothing
 
-- Invoke it as `mintty.exe <node.exe> <cli.js>`, never through `cmd`. mintty is an
-  msys program that rewrites "/"-prefixed arguments, so `mintty -e cmd /c <script>`
-  runs nothing and exits 0 -- the failure looks like "the launcher did nothing".
-- Neither form can be checked in CI: on the runner mintty exits in about half a
-  second without running its child, because there is no interactive desktop. The
-  invocation is only verifiable on a real Windows desktop, which is the other reason
-  it is not the default route.
+On the real machine `mintty.exe <node.exe> <cli.js>` produces a window whose title is
+the command line (so mintty received it) and an empty body. Empty plus a window that
+stays open is mintty's "could not execute the program" case, but the candidates are
+eliminated: the paths have no spaces, the archive ships `git/etc/passwd` (10 entries,
+asserted in CI), and the same node.exe plus cli.js runs fine in the console. The
+runner cannot help -- without an interactive desktop mintty exits in about half a
+second -- so this is only diagnosable on the target.
+
+The console route stays the default and works; only multi-line input is unavailable
+there.
 
 The package ships `agent/settings.json` with `terminal.clearOnShrink: true`: the
 console does not repaint rows the frame stopped using, so a line the editor vacated

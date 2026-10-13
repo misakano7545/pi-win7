@@ -3,7 +3,7 @@ name: win7-package
 on:
   workflow_dispatch:
   push:
-    branches: [win7]
+    branches: [win7, main]
     tags: ['win7-v*']
 
 permissions: {}

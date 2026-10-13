@@ -31,5 +31,6 @@ rem A full-screen TUI needs room: at the console default of 80 columns long path
 rem split mid-word and the status area collides.
 mode con cols=120 lines=34 >nul 2>nul
 
-"%ROOT%node\node.exe" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
+rem The console path needs the width shim; mintty above is a real pty and does not.
+"%ROOT%node\node.exe" --require "%ROOT%win7-tty-width.cjs" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
 exit /b %ERRORLEVEL%

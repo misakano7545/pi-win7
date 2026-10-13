@@ -53,6 +53,9 @@ pi.bat sizes the window to 120x34 (the console default of 80 columns splits path
 mid-word) and points Pi at agent\settings.json, which sets
 terminal.clearOnShrink so rows the interface stops using do not stay on screen.
 agent\keybindings.json drops Ctrl+J from the newline binding; see above.
+win7-tty-width.cjs is loaded with node --require and reports one column less than the
+console has: Windows 7 wraps a line as soon as its last cell is written, where xterm
+waits for the next character, and the difference garbles the whole frame.
 
 Known limits
 ------------

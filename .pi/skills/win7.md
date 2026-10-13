@@ -125,6 +125,15 @@ second -- so this is only diagnosable on the target.
 The console route stays the default and works; only multi-line input is unavailable
 there.
 
+The package ships `win7-tty-width.cjs`, loaded with `node --require` on the console
+path only. Windows 7's console wraps as soon as a line's last cell is written, where
+xterm defers the wrap to the next character; the shim reports one column less so Pi
+never writes that cell. Without it a full-width line scrolls the screen, Pi's model of
+the screen goes a row out of sync, and the frame is drawn garbled -- visibly a missing
+first character, a duplicated footer, and a line appearing as you type. The alt screen
+attempts the same thing with `\x1b[?7l`, which this console ignores. mintty is a real
+pty and does not get the shim.
+
 The package ships `agent/settings.json` with `terminal.clearOnShrink: true`: the
 console does not repaint rows the frame stopped using, so a line the editor vacated
 (an input row the console's stray bytes created) lingers for the whole session.

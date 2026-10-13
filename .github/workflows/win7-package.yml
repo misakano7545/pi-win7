@@ -42,6 +42,7 @@ jobs:
           test -f "$P/agent/bin/fd.exe"
           test -f "$P/pi.bat"
           test -f "$P/verify.ps1"
+          test -f "$P/win7-tty-width.cjs"
           test -f "$P/agent/settings.json"
           test -f "$P/agent/keybindings.json"
           test -f "$P/git/usr/bin/bash.exe"

@@ -153,6 +153,15 @@ the last cell on either version; Windows Terminal defers the wrap the way xterm 
 merely pays the blank column and row) and its switch is `PI_WIN7_TTY_WIDTH=0`. The TTY shim
 is not gated either: native Node cannot see mintty's pty as a TTY on any Windows version.
 
+The tier also has a height test, because being new is not enough to host the TUI. Windows
+Terminal keeps its own window size, so `mode con cols=120 lines=34` cannot grow it: the
+console stayed at 30 rows, and Pi's editor and working-directory line were drawn outside the
+visible area -- maximising the window brought both back, which is what identified the cause.
+`pi.bat` therefore asks for 120x34 first and then takes the compatibility path when the
+console is older than 10.0 *or* shorter than 34 rows. Measured: 30 rows breaks, 34 and above
+work; the exact minimum between them was not measured, and mintty always opens at 34 because
+the launcher passes `-s 120,34`.
+
 ## mintty is the interactive default
 
 An interactive start with no arguments, and with `TERM` unset, opens Pi in the bundled

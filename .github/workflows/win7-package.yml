@@ -119,20 +119,24 @@ jobs:
           set "PATH=%CD%\pkg\git\usr\bin;%PATH%"
           bash.exe -c "echo bash-from-bundle" || exit /b 1
 
-      # mintty needs git\etc\passwd to build a session, and PortableGit's installer
-      # creates it by running post-install.bat -- which does not happen when the
-      # archive is unpacked elsewhere. Report whether the shipped tree has it, and
-      # run the script if not, so this stays true for every future build.
+      # mintty needs git\etc\passwd to build a session, and the archive we unpack on
+      # Linux does not ship it: PortableGit's self-extractor normally generates it on
+      # Windows. Assert the bundle carries the tools to generate it, and that they
+      # actually work -- this is the same recipe pi.bat runs on first use.
       - name: Assert mintty has a session database
         shell: cmd
         run: |
-          if not exist pkg\git\post-install.bat (echo post-install.bat missing & exit /b 1)
           if exist pkg\git\etc\passwd (echo passwd already present) else (echo passwd missing from the archive)
-          if not exist pkg\git\etc\passwd (
-            call pkg\git\post-install.bat
-            if errorlevel 1 (echo post-install.bat failed & exit /b 1)
+          if not exist pkg\git\usr\bin\mkpasswd.exe (echo mkpasswd missing & exit /b 1)
+          if not exist pkg\git\etc (
+            mkdir pkg\git\etc
           )
-          if not exist pkg\git\etc\passwd (echo post-install did not produce passwd & exit /b 1)
+          if not exist pkg\git\etc\passwd (
+            pkg\git\usr\bin\mkpasswd.exe -l > pkg\git\etc\passwd
+            pkg\git\usr\bin\mkgroup.exe -l > pkg\git\etc\group
+          )
+          if not exist pkg\git\etc\passwd (echo mkpasswd produced no passwd & exit /b 1)
+          for /f %%c in ('find /c /v "" ^< pkg\git\etc\passwd') do echo passwd entries: %%c
           echo mintty session database present
 
   release:

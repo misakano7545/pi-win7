@@ -24,7 +24,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     env:
       BRANCH: upstream-sync
     steps:
@@ -76,26 +75,26 @@ jobs:
           ./scripts/win7/check-imports.sh .artifacts/pi-win7-x64
           node scripts/win7/check-shims.mjs .artifacts/pi-win7-x64
 
-      - name: Offer the merge as a pull request
+      # GitHub refuses token-created pull requests unless the repository enables "Allow
+      # GitHub Actions to create and approve pull requests", which this one has off, so the
+      # job pushes the verified branch and hands over the one-click link instead of asking
+      # for a wider token.
+      - name: Push the verified branch and hand over the pull request link
         if: steps.drift.outputs.behind != '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git fetch origin "$BRANCH" || true
           git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
-          cat >/tmp/body.md <<'EOF'
-          earendil-works/pi moved on and merged cleanly.
-
-          Verified in this run: build-package.sh, check-imports.sh (import baseline unchanged,
-          which is what says Windows 7 can still load every import) and check-shims.mjs.
-
-          Nothing users download changes until PI_VERSION in scripts/win7/build-package.sh is
-          bumped; this PR only keeps the tree from drifting away from upstream.
-          EOF
-          open=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
-          if [ -n "$open" ]; then
-            gh pr edit "$open" --body-file /tmp/body.md
-          else
-            gh pr create --base main --head "$BRANCH" --title "chore: sync upstream/main" --body-file /tmp/body.md
-          fi
+          {
+            echo "### upstream/main is ${{ steps.drift.outputs.behind }} commits ahead"
+            echo
+            echo "Merged into \`$BRANCH\` and verified on the merged tree: the package builds,"
+            echo "the import baseline is unchanged (that is what says Windows 7 can still load"
+            echo "every import) and the shim checks pass."
+            echo
+            echo "Open the pull request:"
+            echo "<https://github.com/$GITHUB_REPOSITORY/compare/main...$BRANCH?expand=1>"
+            echo
+            echo "Nothing users download changes until PI_VERSION in"
+            echo "\`scripts/win7/build-package.sh\` is bumped."
+          } >>"$GITHUB_STEP_SUMMARY"

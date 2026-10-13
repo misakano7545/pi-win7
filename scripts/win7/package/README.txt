@@ -21,9 +21,12 @@ How to start
    rights, no registry. Pi starts in the window you launched it from.
 2. First run: /login to connect a provider, then /model to pick a model.
 
-Shift+Enter does not work there: the Windows 7 console cannot report modified keys
-(ENABLE_VIRTUAL_TERMINAL_INPUT arrived in Windows 10). Press Ctrl+J for a newline.
-If you want real modified keys, ask for the bundled mintty instead:
+Shift+Enter does not work in that window: the Windows 7 console cannot report
+modified keys (ENABLE_VIRTUAL_TERMINAL_INPUT arrived in Windows 10), and Ctrl+J is
+deliberately unbound in agent\keybindings.json because this console emits stray line
+feeds that Pi would otherwise read as Ctrl+J and turn into blank lines of their own.
+That leaves the console without a newline key, which is the lesser evil; multi-line
+prompts need the bundled mintty instead:
 
        set PI_WIN7_MINTTY=1       (PowerShell: $env:PI_WIN7_MINTTY=1)
        pi.bat
@@ -49,14 +52,15 @@ Windows 7 adjustments
 pi.bat sizes the window to 120x34 (the console default of 80 columns splits paths
 mid-word) and points Pi at agent\settings.json, which sets
 terminal.clearOnShrink so rows the interface stops using do not stay on screen.
+agent\keybindings.json drops Ctrl+J from the newline binding; see above.
 
 Known limits
 ------------
 * The terminal layer is only partly verified. Rendering and colours work in the
   Windows 7 console (measured), but modified keys do not, so Shift+Enter is
-  unavailable - press Ctrl+J. The bundled mintty can be requested with
-  PI_WIN7_MINTTY=1, but it is not the default: it exits 0 without running its
-  child in some environments, which would leave pi.bat doing nothing.
+  unavailable and the console has no newline key - see above. The bundled mintty can
+  be requested with PI_WIN7_MINTTY=1, but it is not the default: it exits 0 without
+  running its child in some environments, which would leave pi.bat doing nothing.
 * pi.exe (the official single-file build) is NOT used here: it is compiled with
   Bun, which requires Windows 10 1809 or newer. That is why this package ships a
   Node runtime instead.

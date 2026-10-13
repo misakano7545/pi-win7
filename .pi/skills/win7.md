@@ -127,9 +127,15 @@ console does not repaint rows the frame stopped using, so a line the editor vaca
 (an input row the console's stray bytes created) lingers for the whole session.
 
 `tui.input.newLine` defaults to `["shift+enter", "ctrl+j"]`, and `ctrl+j` is byte
-0x0A. On a console that echoes stray bytes into stdin, a phantom LF therefore reads
-as "insert a newline". If a line still appears on its own, remapping that binding in
-`agent/keybindings.json` is the next lever -- it trades away Ctrl+J for newlines.
+0x0A. That makes the phantom line unavoidable by any other route: an editor line can
+only be inserted by Shift+Enter or Ctrl+J, and Shift+Enter never arrives on this
+console -- so the stray byte must be a line feed. The package therefore ships
+`agent/keybindings.json` with `["shift+enter"]` only.
+
+Cost, stated plainly: the console then has no newline key at all. There is no free
+Ctrl+<letter> to reassign -- the unused ones are Ctrl+H, Ctrl+I and Ctrl+M, which are
+Backspace, Tab and Enter -- and the remaining modifier combinations do not survive
+this console either. Multi-line prompts require mintty.
 
 Layout: at 80 columns the TUI is cramped -- long paths split mid-word and the
 status area collides. `pi.bat` sets 120x34 with `mode con`; if the screen is too

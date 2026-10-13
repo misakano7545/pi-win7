@@ -43,6 +43,7 @@ jobs:
           test -f "$P/pi.bat"
           test -f "$P/verify.ps1"
           test -f "$P/agent/settings.json"
+          test -f "$P/agent/keybindings.json"
           test -f "$P/git/usr/bin/bash.exe"
           test -f "$P/git/usr/bin/mintty.exe"
           test -f "$P/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js"

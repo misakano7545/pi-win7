@@ -154,6 +154,16 @@ cat >"$PKG_DIR/agent/settings.json" <<'EOF'
 }
 EOF
 
+# On this console the ONLY bytes that can insert an editor line are 0x0A (Ctrl+J)
+# and a Shift+Enter that never arrives, so a stray line feed inserts a blank line
+# on its own. Unbinding Ctrl+J stops that; it costs the console a newline key, which
+# it never really had. Shift+Enter still works in mintty.
+cat >"$PKG_DIR/agent/keybindings.json" <<'EOF'
+{
+  "tui.input.newLine": ["shift+enter"]
+}
+EOF
+
 cat >"$PKG_DIR/node/SOURCES.txt" <<EOF
 node.exe ${NODE_TAG} -- DeftKing/nodejs-win7 ${NODE_ARCHIVE}
   archive sha256 ${NODE_SHA256}

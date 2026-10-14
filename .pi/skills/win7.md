@@ -153,14 +153,23 @@ the last cell on either version; Windows Terminal defers the wrap the way xterm 
 merely pays the blank column and row) and its switch is `PI_WIN7_TTY_WIDTH=0`. The TTY shim
 is not gated either: native Node cannot see mintty's pty as a TTY on any Windows version.
 
-Never call `mode con` inside Windows Terminal. WT ignores app-initiated resizes: the call
-changes the size conhost reports and the rows that absolute positioning uses, while the
-window keeps its own, so Pi lays its frame out for rows nobody can see and the bottom of it --
-the editor and the working-directory line -- lands outside the visible area (microsoft/terminal
-#5094 and #11033; the same trap as any `.bat` that sizes the console before launching an app).
-The symptom identifies it: dragging the window puts it right, because a real resize re-syncs
-the two. `pi.bat` therefore skips `mode con` when `WT_SESSION` is set, so only conhost windows
-are resized, and there `mode con` moves the window for real.
+Never call `mode con` where the console may be shown by a terminal. WT ignores app-initiated
+resizes: the call changes the size conhost reports and the rows that absolute positioning uses,
+while the window keeps its own, so Pi lays its frame out for rows nobody can see and the bottom
+of it -- the editor and the working-directory line -- lands outside the visible area
+(microsoft/terminal#5094 and #11033). The symptom identifies it: dragging the window puts it
+right, because a real resize re-syncs the two.
+
+Guarding on `WT_SESSION` is not enough, and that is the trap worth remembering: Windows 11 makes
+Windows Terminal the *default terminal*, so a console started by something else -- a
+double-clicked pi.bat, "open in terminal", a `start` -- is handed to WT by the system, and WT adds
+no `WT_SESSION` to a console it did not start (measured: `WT_SESSION` and `WT_PROFILE_ID` both
+empty in the handed-over console). A guard on it therefore passes and `mode con` runs anyway,
+which is exactly the Windows 11 input-box bug. The rule `pi.bat` uses asks nothing it cannot
+know: only `os.release()` major < 10 -- where the console host itself owns the window and
+follows the resize -- is ever resized, and every Windows 10+ console keeps the size its host
+gave it. Widen the window by hand for more room; a real resize also re-syncs a console an older
+copy had already stretched.
 
 Measured: the same package renders the editor, cwd and status correctly in a Windows 10
 conhost window at 32 rows, while a Windows Terminal window at 29 rows showed the editor's top
@@ -266,9 +275,8 @@ this console either. That is the fallback's cost only: the default path is mintt
 `Shift+Enter` works.
 
 Layout: at 80 columns the TUI is cramped -- long paths split mid-word and the
-status area collides. `pi.bat` sets 120x34 with `mode con`, and the mintty launcher opens
-its window at the same size with `-s 120,34`; if the screen is too small for that, the
-`mode con` call fails silently and the console keeps its size.
+status area collides. `pi.bat` asks the console for 120x34 with `mode con` below Windows 10
+only, and the mintty launcher opens its window at that size with `-s 120,34`.
 
 ## Shipping
 

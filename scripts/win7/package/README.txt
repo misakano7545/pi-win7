@@ -54,8 +54,12 @@ Non-interactive use (works even in a plain cmd.exe window)
 
 Windows 7 adjustments
 ---------------------
-pi.bat sizes the window to 120x34 (the console default of 80 columns splits paths
-mid-word) and points Pi at agent\settings.json, which sets
+pi.bat asks the console for 120x34 below Windows 10, where the console host owns the window
+and follows a resize (the console default of 80 columns splits paths mid-word). From Windows
+10 on it leaves the console alone: Windows Terminal may be showing that console and ignores
+an app-initiated resize, so asking for rows would leave Pi laying its frame out for rows the
+window does not have, which pushes the input box off screen. Widen the window itself when the
+interface is cramped. pi.bat also points Pi at agent\settings.json, which sets
 terminal.clearOnShrink so rows the interface stops using do not stay on screen.
 agent\keybindings.json drops Ctrl+J from the newline binding; see above.
 
@@ -69,11 +73,10 @@ console. Set PI_WIN7_CONSOLE=1 (or PI_WIN7_MINTTY=0) to always use the console.
 
 Windows 10 and later need none of the colour work: their console understands VT output and
 input and reports the mouse, so the colour and glyph shims do nothing there. An interactive
-start then runs Pi's own TUI in the console, sized to 120x34 by `mode con` -- except inside
-Windows Terminal, which ignores app-initiated resizes, so there `mode con` would change only
-the size conhost reports and Pi would draw its frame for rows nobody can see; pi.bat leaves
-that window alone instead. Set PI_WIN7_CONSOLE_SHIMS=1 to force the compatibility path on any
-Windows, or =0 to force the native one. The width shim is not part of that tier: conhost
+start then runs Pi's own TUI in the console at whatever size the console's host gave the
+window, because pi.bat asks for no size there (see above). Set PI_WIN7_CONSOLE_SHIMS=1 to force
+the compatibility path on any Windows, or =0 to force the native one. The width shim is not
+part of that tier: conhost
 scrolls when the last cell of the last row is written on Windows 7 and Windows 11 alike, and
 without the shim Pi's frame lands a row out of place and the input box goes with it. Set
 PI_WIN7_TTY_WIDTH=0 to disable it.

@@ -3,6 +3,122 @@
 
 by MisakaNo小御坂 - https://github.com/misakano7545/pi-win7
 
+中文说明
+========
+
+这是什么
+--------
+自带运行环境的 Pi Agent，专为 Windows 7 SP1 x64 打包。解压到任意位置就能用：U 盘、
+桌面、C:\pi 都行。不装东西、不动注册表、不用 npm，第一次启动也不需要联网。
+
+    pi-win7-x64/
+      pi.bat      启动入口（官方包里这个位置是 pi.exe）
+      node/       能在 Windows 7 上跑的 Node.js 运行时
+      git/        便携版 Git：给 Pi 的 bash 工具提供 bash，也提供 mintty 终端
+      pi/         Pi 程序本体
+      agent/      你的数据：设置、会话、凭据、扩展
+      agent/bin/  rg.exe 和 fd.exe
+
+怎么开始
+--------
+1. 双击 pi.bat。就这样，不用先装任何东西，也不需要管理员权限。
+2. 第一次运行先 /login 连接服务商，再用 /model 选模型。
+
+默认会用包里自带的 mintty 打开。原因是 Windows 7 的控制台有三个绕不过的限制：收不到
+鼠标事件（滚轮不能滚记录）、报不出修饰键（Shift+Enter 收不到），还会冒出杂散的换行
+字节（所以 agent\keybindings.json 主动解绑了 Ctrl+J，代价是控制台里没有换行键）。
+mintty 是真正的 pty，这三样都能用。
+
+想留在普通控制台里跑，用 PageUp/PageDown 翻页：
+
+      set PI_WIN7_CONSOLE=1      (PowerShell: $env:PI_WIN7_CONSOLE=1)
+      pi.bat
+
+要是 mintty 没能把 Pi 拉起来（有些环境下它会直接退出），pi.bat 会提示一句，然后回落
+到控制台。另外 agent\settings.json 打开了 terminal.clearOnShrink，界面不再用的行会被
+清掉，不会一直留在屏幕上。
+
+非交互调用（普通 cmd 窗口里也能用）
+-----------------------------------
+      pi.bat -p "解释这个项目"
+      pi.bat --mode json "列出文件" > events.jsonl
+
+写自己的扩展
+------------
+TypeScript 不需要构建：把文件放进 agent\extensions\，或者开发时直接加载：
+
+      ./pi.bat --extension p:\ath\to\hello.ts
+
+改完在 Pi 里打 /reload 就生效。详细写法和七十多个例子在
+pi\node_modules\@earendil-works\pi-coding-agent\docs\extensions.md 和它旁边的
+examples\extensions\ 里（都是英文）。
+
+控制台里的界面为什么更朴素
+--------------------------
+Windows 7 的控制台没有 VT/ANSI 支持，而 Pi 按真彩色绘制，所以 cmd 里的颜色只有 16
+色、边框是 ASCII。三个垫片在启动时把界面压到控制台能显示的范围内，它们不改 pi\ 里的
+任何文件，升级 Pi 也不会丢：
+
+  win7-tty-width.cjs  报出去的行列各减 1。这个控制台写满最后一格就立刻上滚，xterm 是
+                      等下一个字符才滚；不减 1 的话每次重绘整屏都往上跑一行，输入框跟
+                      着错位。
+  win7-boxascii.cjs   边框改用单列 ASCII。中文代码页会把制表符这类“宽度模糊”的字符按
+                      两格宽画，Pi 却按一格算，不改写就会折行，输入框变成一坨横线。代
+                      码页不动，中文显示和输入法都照常。
+  win7-ansi16.cjs     把 256 色和真彩色降级成控制台支持的 16 色。这个控制台会丢掉真彩
+                      色码，256 色则会落到错误的属性上，看起来像反相的色块。
+
+三个垫片各有对比开关：PI_WIN7_TTY_WIDTH=0、PI_WIN7_BOXASCII=0、PI_WIN7_ANSI16=0。
+输出被重定向到文件时三个都不生效。Windows 10 及以上不需要颜色和边框的改写，那里的控
+制台懂 VT，也会上报鼠标；宽度垫片仍然生效（Win7 和 Win11 的控制台都是写满最后一格就
+滚）。PI_WIN7_CONSOLE_SHIMS=1 或 =0 可以强制走兼容路径或原生路径。
+
+别用 chcp 437 去修边框：边框是好看了，但控制台就不能显示中文了（“中文测试”会变成
+“????”）。pi.bat 也只在 Windows 10 以下请求 120x34 的控制台尺寸；Windows 10 及以上不
+动控制台，窗口小了自己拉大就行，因为 Windows Terminal 会忽略程序发起的改尺寸。
+
+已知限制
+--------
+* 控制台下只有 16 色、边框是 ASCII，这是 Windows 7 控制台本身的限制，不是没修好。
+* 控制台里没有换行键：Shift+Enter 收不到，Ctrl+J 又被解绑了。默认走 mintty 就没这个
+  问题。
+* mintty 用自己的字体（一般能显示中英日文），字体覆盖不到的字会显示成方框。可以在
+  mintty 选项里设一个回退字体，或者设 PI_WIN7_CONSOLE=1。
+* 官方的 pi.exe 用不了，那是 Bun 编译的单文件，Bun 要求 Windows 10 1809 起，所以这里
+  换成了自带的 Node 运行时。
+* 自带的 Node.js 是社区构建（见下面的致谢），不是官方发布版。官方在 v20.3.0 就放弃了
+  Windows 7。用之前可以看 node\SOURCES.txt 和 CHECKSUMS.txt。
+* 自动更新已关闭（PI_OFFLINE=1）。这个包是有意冻结版本的：更新的 Pi 会再次抬高 Node
+  的版本要求。
+* Windows 7 本身已经不再收到安全更新。
+
+校验
+----
+在目标机上用 PowerShell 运行 verify.ps1。它只读文件，会打印每个组件的版本，出问题时
+能直接看出是哪一件。CHECKSUMS.txt 列出每个组件的 sha256，都取自构建这个压缩包的那次
+构建。
+
+致谢
+----
+自带的 Node.js 运行时是 DeftKing 的社区构建：
+https://github.com/DeftKing/nodejs-win7
+没有它 Pi 根本没法在 Windows 7 上运行。这个项目没有 license 文件，在这里重新分发是一
+个刻意的选择，node\SOURCES.txt 记了确切的压缩包和它的 sha256。
+
+git\ 是 Git for Windows 2.46.2 的 PortableGit（最后一个支持 Win7 的版本）：
+https://github.com/git-for-windows/git/releases/tag/v2.46.2.windows.1
+GPLv2 软件，作为独立程序原样分发，Pi 调用它但不链接它，它自己的 LICENSE.txt 就在
+git\ 里面。
+
+下载
+----
+https://github.com/misakano7545/pi-win7/releases
+
+English (the original document)
+===============================
+Everything below is the original English text. It is the authoritative version and
+carries the implementation detail the Chinese section leaves out.
+
 What this is
 ------------
 A complete, self-contained Pi for Windows 7 SP1 x64. Unzip anywhere (USB stick,

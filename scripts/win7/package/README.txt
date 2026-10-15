@@ -1,5 +1,7 @@
-Pi for Windows 7 - portable package
+﻿Pi for Windows 7 - portable package
 ===================================
+
+by MisakaNo小御坂 - https://github.com/misakano7545/pi-win7
 
 What this is
 ------------

@@ -289,3 +289,8 @@ collide with them.
 Re-distribution caveat: the Node runtime comes from a repository with no license
 file, so shipping it is a deliberate decision that must be stated in the release
 notes.
+
+`README.txt` starts with a UTF-8 BOM on purpose, for one line: `by MisakaNo小御坂`.
+Windows 7 Notepad cannot detect UTF-8 without a BOM, so the credit would open as
+mojibake there (GitHub and every modern editor ignore it). Keep the BOM when editing
+the file, and remember it is not in `CHECKSUMS.txt`, which lists binaries only.

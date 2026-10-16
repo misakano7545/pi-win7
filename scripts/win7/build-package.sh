@@ -20,7 +20,7 @@
 
 set -euo pipefail
 
-PI_VERSION="1.3.0"
+PI_VERSION="1.2.0"
 NODE_TAG="v22.23.2"
 NODE_ARCHIVE="node-v22.23.2-win-x64.7z"
 RG_VERSION="14.1.0"

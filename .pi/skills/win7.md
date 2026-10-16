@@ -30,11 +30,21 @@ re-running the checks in this skill.
 | PortableGit `git/` | 2.46.2 | last release supporting Windows 7; supplies bash for Pi's bash tool and mintty, the terminal that can report modified keys |
 | ripgrep `rg.exe` | 14.1.0 | 14.1.1 was built with Rust 1.78, whose Windows targets require Windows 10 |
 | fd `fd.exe` | 10.3.0 | 10.4.0 raised the MSRV to 1.90 and dropped Windows 7 |
-| pi | 1.2.0 | pinned; newer releases raise the Node feature floor again |
+| pi | 1.3.0 | pinned; a bump must leave `check-imports.sh` clean (1.3.0 changed nothing) |
 
 pi's real Node floor is 22.12, not the `engines` field's 22.19 -- measured, see
 the table below. Never edit `engines`; it is upstream's publish contract and a
 merge conflict every time.
+
+Bumping the pinned pi version (the package installs from npm, never from this
+tree): read the new release's `packages/tui/CHANGELOG.md` section -- an empty one
+means the console shims' premises still hold, a populated one means re-checking
+them. Then `npm install --ignore-scripts --omit=dev --os=win32 --cpu=x64
+<version>` into a copy of a built package, apply the two strip steps from
+`build-package.sh`, and require `check-imports.sh` to report the baseline
+unchanged. Confirm `dist/bundle/cli.js` and
+`pi-tui/native/win32/prebuilds/win32-x64/win32-platform.node` still exist: the
+package files and `CHECKSUMS.txt` name both paths.
 
 ## Red lines
 
@@ -78,7 +88,7 @@ Verified on real hardware -- Windows 7 Enterprise SP1 (6.1.7601), PowerShell 2.0
 |---|---|
 | `node --version` | v22.23.2 |
 | `node.exe` sha256 | matches CHECKSUMS.txt |
-| `pi --version` | 1.2.0 |
+| `pi --version` | 1.3.0 |
 | `rg --version` | ripgrep 14.1.0 |
 | `fd --version` | fd 10.3.0 |
 
@@ -89,7 +99,7 @@ Verified here (no Windows involved):
 
 - `gypfile` count 0; the two wasm deps (`photon-node`, `quickjs-wasi`) are
   platform-independent.
-- pi tree starts on Node and prints `1.2.0`; `-p` reaches the missing-credential
+- pi tree starts on Node and prints `1.3.0`; `-p` reaches the missing-credential
   path; `list` works after the esbuild strip.
 - Import tables: `node.exe`, `rg.exe`, `fd.exe` and `pi-tui`'s
   `win32-platform.node` import nothing newer than Windows Vista.
@@ -104,7 +114,8 @@ that Windows 7 runs it. `verify.ps1` on the real machine is the only evidence.
 
 ## Terminal behaviour on Windows 7
 
-Measured on the real machine with pi 1.2.0: the console is code page 936, has 16
+Measured on the real machine with pi 1.2.0 (1.3.0 leaves pi-tui untouched,
+so these still describe the packaged TUI): the console is code page 936, has 16
 colours (`hasColors()=true`, `hasColors(256)=false`, `getColorDepth()=4`) and reports
 120x33 after pi.bat's `mode con`. It has no VT support, so it does not draw Pi's TUI
 unaided: Pi classifies every `win32` console as truecolour, and

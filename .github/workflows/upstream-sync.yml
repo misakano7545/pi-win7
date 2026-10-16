@@ -131,7 +131,8 @@ jobs:
           # workflows regularly. Name that case instead of failing on the raw rejection.
           workflow_files="$(git diff --name-only main...HEAD -- .github/workflows/)"
           if [[ -n "$workflow_files" ]]; then
-            echo "::warning::this merge changes workflow files, which a run token cannot push"
+            echo "::warning::this merge changes $workflow_files, which a run token cannot push"
+            echo "::notice::land it with: git fetch upstream main && git merge upstream/main && git push origin main"
             {
               echo "### upstream/main is ${{ steps.drift.outputs.behind }} commits ahead"
               echo

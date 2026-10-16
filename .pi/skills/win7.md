@@ -312,9 +312,13 @@ Windows 7 Notepad cannot detect UTF-8 without a BOM, so the credit would open as
 mojibake there (GitHub and every modern editor ignore it). Keep the BOM when editing
 the file, and remember it is not in `CHECKSUMS.txt`, which lists binaries only.
 
-`upstream-sync.yml` adopts a newer npm release of pi on the sync branch and never pushes
-main. A run's token can never push a workflow file -- a `permissions` block has no
-`workflows` key, by design -- so when upstream's commits touch `.github/workflows/` the job
-fails on purpose and prints the hand-merge command instead of a raw remote rejection. Run
-that over SSH: ordinary write access is enough there, which is how upstream workflow changes
-land in this fork.
+`upstream-sync.yml` adopts a newer npm release of pi: it bumps the pin on the sync branch,
+verifies the package against it, and then lands main, tags `win7-v<version>-1` and dispatches
+`win7-package.yml` for the release -- but only when the new release left `pi-tui` untouched,
+because a TUI change is what the console shims exist for and only the target machine can judge
+it. Two cases stop short and hand over commands instead: a merge that touches
+`.github/workflows/` (no run token may push those -- a `permissions` block has no `workflows`
+key, by design) and a conflict. Both land over SSH, where ordinary write access is enough.
+A tag pushed by that token starts no workflow run -- only `workflow_dispatch` and
+`repository_dispatch` do -- which is why the release is dispatched explicitly, and why the
+commit this job lands on main runs the sync's own checks rather than `ci.yml`.

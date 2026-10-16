@@ -1,16 +1,15 @@
 name: upstream-sync
 
 # The Windows 7 support here is an add-on layer, not a fork of pi's source: the shipped
-# package installs pi from the npm pin in scripts/win7/build-package.sh, so a source sync
-# cannot change what users download. What it buys is a cheap `git merge upstream/main`, and
-# this job also adopts a newer npm release of pi by bumping that pin on the sync branch, so
-# the verification below runs against the version users would get.
+# package installs pi from the npm pin in scripts/win7/build-package.sh. This job keeps
+# `git merge upstream/main` cheap and adopts a newer npm release of pi: it bumps that pin,
+# verifies the package against it, and then -- when the new release did not touch pi-tui --
+# lands the result on main, tags it and publishes it.
 #
-# It never pushes main and never releases: a clean merge (plus any pin bump) is verified --
-# package build, import baseline, shims -- and offered as a pull request; a conflict fails
-# the run with the file list instead. Merging that pull request is the human decision, and
-# publishing it is one tag (`win7-v<pi version>-1`), which win7-package.yml turns into a
-# release.
+# Three things stop short of publishing and hand over the details instead, because a runner
+# cannot decide them: the new release changed pi-tui (the console shims need a look on real
+# Windows 7), the merge touches workflow files (no run token may push those), or the merge
+# conflicts. Otherwise nobody has to do anything.
 on:
   schedule:
     # Mondays 03:00 UTC, 11:00 in CST, so a failed sync is waiting at the start of the week.
@@ -28,6 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # for dispatching win7-package.yml: a tag pushed with this token starts no run
+      actions: write
     env:
       BRANCH: upstream-sync
     steps:
@@ -61,6 +62,7 @@ jobs:
           pinned="$(sed -n 's/^PI_VERSION="\(.*\)"$/\1/p' scripts/win7/build-package.sh)"
           latest="$(npm view @earendil-works/pi-coding-agent dist-tags.latest 2>/dev/null || true)"
           adopted=0
+          tui_body=1
           if [[ -n "$latest" && "$latest" != "$pinned" ]] \
              && [[ "$(printf '%s\n%s\n' "$pinned" "$latest" | sort -V | tail -1)" == "$latest" ]]; then
             adopted=1
@@ -68,11 +70,10 @@ jobs:
             echo "adopting pi $latest, replacing $pinned"
             npm view "@earendil-works/pi-coding-agent@$latest" engines --json
             echo "newest pi-tui changelog section:"
-            awk '/^## \[/{n++} n==1' packages/tui/CHANGELOG.md | head -12
-            echo ""
-            echo "An empty section above means the console shims still describe the TUI."
-            echo "A populated one means re-checking them on the target machine before"
-            echo "merging this pull request."
+            tui_section="$(awk '/^## \[/{n++} n==1' packages/tui/CHANGELOG.md)"
+            printf '%s\n' "$tui_section" | head -12
+            tui_body="$(printf '%s\n' "$tui_section" | tail -n +2 | grep -cv '^[[:space:]]*$' || true)"
+            echo "body lines: $tui_body (0 means the console shims still describe the TUI)"
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add scripts/win7/build-package.sh
@@ -82,6 +83,13 @@ jobs:
           else
             echo "pin is $pinned, npm latest is ${latest:-unreachable}: nothing to adopt"
             echo "changed=0" >>"$GITHUB_OUTPUT"
+          fi
+          # Publishing is only safe when the TUI did not change: that is the one thing here
+          # a runner cannot check, and what the console shims are all about.
+          if [[ "$adopted" == "1" && "$tui_body" == "0" ]]; then
+            echo "auto=1" >>"$GITHUB_OUTPUT"
+          else
+            echo "auto=0" >>"$GITHUB_OUTPUT"
           fi
           # A pin bump is worth a branch even when upstream's source has not moved.
           if [[ "${{ steps.drift.outputs.behind }}" != "0" || "$adopted" == "1" ]]; then
@@ -118,12 +126,10 @@ jobs:
           ./scripts/win7/check-imports.sh .artifacts/pi-win7-x64
           node scripts/win7/check-shims.mjs .artifacts/pi-win7-x64
 
-      # GitHub refuses token-created pull requests unless the repository enables "Allow
-      # GitHub Actions to create and approve pull requests", which this one has off, so the
-      # job pushes the verified branch and hands over the one-click link instead of asking
-      # for a wider token.
-      - name: Push the verified branch, or explain why it cannot
+      - name: Land and publish, or explain what needs a human
         if: steps.pin.outputs.work == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # No token a workflow run is given may push a workflow file -- there is no
@@ -156,31 +162,75 @@ jobs:
             } >>"$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          git fetch origin "$BRANCH" || true
-          git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
-          {
-            echo "### upstream/main is ${{ steps.drift.outputs.behind }} commits ahead"
-            echo
-            if [[ "${{ steps.pin.outputs.changed }}" == "1" ]]; then
-              echo "This branch also moves the packaged pi to **${{ steps.pin.outputs.version }}**"
-              echo "(the current npm release), and the checks below ran against that version:"
-              echo "the package builds, the import baseline is unchanged -- which is what says"
-              echo "Windows 7 can still load every import -- and the shim checks pass."
+
+          if [[ "${{ steps.pin.outputs.auto }}" == "1" ]]; then
+            tag="win7-v${{ steps.pin.outputs.version }}-1"
+            git checkout main
+            git merge --ff-only "$BRANCH"
+            git push origin main
+            landed=1
+            if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+              echo "::warning::$tag already exists, so this run only landed the bump on main"
+              published=0
             else
-              echo "Merged into \`$BRANCH\` and verified on the merged tree: the package builds,"
-              echo "the import baseline is unchanged (that is what says Windows 7 can still load"
-              echo "every import) and the shim checks pass."
+              git tag "$tag"
+              git push origin "$tag"
+              # A tag pushed with this token starts no workflow run (only workflow_dispatch
+              # and repository_dispatch do), so ask win7-package.yml for the release.
+              gh workflow run win7-package.yml --ref "$tag"
+              published=1
             fi
-            echo
-            echo "Open the pull request:"
-            echo "<https://github.com/$GITHUB_REPOSITORY/compare/main...$BRANCH?expand=1>"
-            echo
-            if [[ "${{ steps.pin.outputs.changed }}" == "1" ]]; then
-              echo "Merging it changes what users download. Publishing that is one tag:"
+          else
+            git fetch origin "$BRANCH" || true
+            git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
+            landed=0
+            published=0
+          fi
+
+          {
+            if [[ "$landed" == "1" ]]; then
+              echo "### packaged pi is now ${{ steps.pin.outputs.version }}"
               echo
-              echo "\`git tag win7-v${{ steps.pin.outputs.version }}-1 && git push origin win7-v${{ steps.pin.outputs.version }}-1\`"
+              echo "upstream/main was ${{ steps.drift.outputs.behind }} commits ahead. The merge,"
+              echo "the pin bump, the package build, the import baseline and the shim checks all"
+              echo "ran in this job, and main is at $(git rev-parse --short HEAD)."
+              echo
+              if [[ "$published" == "1" ]]; then
+                echo "\`$tag\` is pushed and win7-package.yml was dispatched on it, so the"
+                echo "release is built from that same commit:"
+                echo "<https://github.com/$GITHUB_REPOSITORY/releases/tag/$tag>"
+              else
+                echo "\`$tag\` already existed, so nothing was published. Publish it yourself"
+                echo "if that release is stale."
+              fi
             else
-              echo "Nothing users download changes: PI_VERSION in"
-              echo "\`scripts/win7/build-package.sh\` is already the npm release."
+              echo "### upstream/main is ${{ steps.drift.outputs.behind }} commits ahead"
+              echo
+              if [[ "${{ steps.pin.outputs.changed }}" == "1" ]]; then
+                echo "This branch also moves the packaged pi to **${{ steps.pin.outputs.version }}**,"
+                echo "and the checks below ran against that version: the package builds, the"
+                echo "import baseline is unchanged -- which is what says Windows 7 can still load"
+                echo "every import -- and the shim checks pass."
+                echo
+                echo "It was not published automatically: the newest pi-tui changelog section has"
+                echo "content above, and a TUI change is exactly what the console shims exist for,"
+                echo "so it needs a look on the target machine first."
+              else
+                echo "Merged into \`$BRANCH\` and verified on the merged tree: the package builds,"
+                echo "the import baseline is unchanged (that is what says Windows 7 can still load"
+                echo "every import) and the shim checks pass."
+              fi
+              echo
+              echo "Open the pull request:"
+              echo "<https://github.com/$GITHUB_REPOSITORY/compare/main...$BRANCH?expand=1>"
+              echo
+              if [[ "${{ steps.pin.outputs.changed }}" == "1" ]]; then
+                echo "Publishing is one tag once that is reviewed:"
+                echo
+                echo "\`git tag win7-v${{ steps.pin.outputs.version }}-1 && git push origin win7-v${{ steps.pin.outputs.version }}-1\`"
+              else
+                echo "Nothing users download changes: PI_VERSION in"
+                echo "\`scripts/win7/build-package.sh\` is already the npm release."
+              fi
             fi
           } >>"$GITHUB_STEP_SUMMARY"

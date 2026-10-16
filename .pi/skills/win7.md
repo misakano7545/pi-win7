@@ -301,7 +301,20 @@ Re-distribution caveat: the Node runtime comes from a repository with no license
 file, so shipping it is a deliberate decision that must be stated in the release
 notes.
 
+`upstream-sync.yml` adopts a newer npm release on the sync branch -- it never pushes main
+and never releases. A token a workflow run is given can never push a workflow file (there
+is no `workflows` key in a `permissions` block, by design), so a sync whose merge touches
+`.github/workflows/` stops and prints the hand-merge command instead: do that over SSH or
+HTTPS as yourself, where ordinary write access is enough.
+
 `README.txt` starts with a UTF-8 BOM on purpose, for one line: `by MisakaNo小御坂`.
 Windows 7 Notepad cannot detect UTF-8 without a BOM, so the credit would open as
 mojibake there (GitHub and every modern editor ignore it). Keep the BOM when editing
 the file, and remember it is not in `CHECKSUMS.txt`, which lists binaries only.
+
+`upstream-sync.yml` adopts a newer npm release of pi on the sync branch and never pushes
+main. A run's token can never push a workflow file -- a `permissions` block has no
+`workflows` key, by design -- so when upstream's commits touch `.github/workflows/` the job
+fails on purpose and prints the hand-merge command instead of a raw remote rejection. Run
+that over SSH: ordinary write access is enough there, which is how upstream workflow changes
+land in this fork.

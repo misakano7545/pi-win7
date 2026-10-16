@@ -122,10 +122,39 @@ jobs:
       # GitHub Actions to create and approve pull requests", which this one has off, so the
       # job pushes the verified branch and hands over the one-click link instead of asking
       # for a wider token.
-      - name: Push the verified branch and hand over the pull request link
+      - name: Push the verified branch, or explain why it cannot
         if: steps.pin.outputs.work == '1'
         run: |
           set -euo pipefail
+          # No token a workflow run is given may push a workflow file -- there is no
+          # `workflows` key in a permissions block, by design -- and upstream edits its own
+          # workflows regularly. Name that case instead of failing on the raw rejection.
+          workflow_files="$(git diff --name-only main...HEAD -- .github/workflows/)"
+          if [[ -n "$workflow_files" ]]; then
+            echo "::warning::this merge changes workflow files, which a run token cannot push"
+            {
+              echo "### upstream/main is ${{ steps.drift.outputs.behind }} commits ahead"
+              echo
+              echo "Verified in this runner as usual, but this merge cannot be pushed by this"
+              echo "job: it changes workflow files, and GitHub refuses a push that edits one"
+              echo "unless the pushing credential carries that grant, which a run token can"
+              echo "never have."
+              echo
+              echo '```'
+              echo "$workflow_files"
+              echo '```'
+              echo
+              echo "Land it by hand -- the same command this job would have run:"
+              echo
+              echo '```'
+              echo "git fetch upstream main && git merge upstream/main && git push origin main"
+              echo '```'
+              echo
+              echo "The alternative is a credential that may push workflow files (a PAT with"
+              echo "the \`workflow\` scope, or an App token with the Workflows permission)."
+            } >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           git fetch origin "$BRANCH" || true
           git push --force-with-lease origin "HEAD:refs/heads/$BRANCH"
           {

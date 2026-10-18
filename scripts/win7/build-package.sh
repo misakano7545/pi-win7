@@ -150,8 +150,22 @@ cp "$ROOT/scripts/win7/package/pi.bat" "$ROOT/scripts/win7/package/README.txt" \
 
 # The Windows 7 console does not repaint rows the frame stopped using, so a line
 # the editor vacated lingers for the rest of the session.
+# The default theme is "system", which asks the terminal for its palette; conhost answers
+# nothing, so Pi falls back to the no-panel-background case and user messages lose their
+# blue bar. "dark" is the same palette Pi ships for that look. The network settings turn a
+# stalled stream from a five-minute silent wait (the 300000 ms default, plus a retry) into a
+# minute and two visible retries; provider-level retry stays 0 so Pi keeps handling quota
+# and rate-limit errors itself. See docs/settings.md, "Network and retries".
 cat >"$PKG_DIR/agent/settings.json" <<'EOF'
 {
+  "theme": "dark",
+  "httpIdleTimeoutMs": 60000,
+  "retry": {
+    "enabled": true,
+    "maxRetries": 2,
+    "baseDelayMs": 1000,
+    "maxAgentDelayMs": 15000
+  },
   "terminal": {
     "clearOnShrink": true
   }

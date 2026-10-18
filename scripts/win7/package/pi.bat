@@ -11,9 +11,10 @@ set "PI_OFFLINE=1"
 set "PATH=%ROOT%node;%ROOT%git\cmd;%ROOT%git\usr\bin;%PATH%"
 
 rem One Node call decides whether this is the old console. Below Windows 10 the console host
-rem owns its window, follows a resize, and needs the compatibility shims; from Windows 10 on
-rem Pi draws the frame itself and the shims stand down. PI_WIN7_CONSOLE_SHIMS=1/0 still forces
-rem the tier by hand, but the size request below goes by the OS alone.
+rem owns its window, follows a resize, and needs every compatibility shim; from Windows 10 on
+rem Pi draws the frame itself and only the shims whose job the console still does not do (the
+rem width, and the glyphs while the console is on a CJK code page) stay. PI_WIN7_CONSOLE_SHIMS=1/0
+rem still forces the tier by hand, but the size request below goes by the OS alone.
 set "PI_OLD_CONSOLE="
 "%ROOT%node\node.exe" -e "process.exit(Number(require('node:os').release().split('.')[0]) < 10 ? 0 : 1)"
 if not errorlevel 1 set "PI_OLD_CONSOLE=1"
@@ -52,11 +53,18 @@ if "%~1"=="" if "%PI_WIN7_CONSOLE_SHIMS%"=="1" if not defined PI_WIN7_CONSOLE if
 
 rem The console path loads the three console shims first, then the TTY shim:
 rem win7-tty-width keeps Pi off the last cell and last row this console scrolls on,
-rem win7-boxascii draws the borders in one-column ASCII (a 936 code page renders
-rem them full-width and wraps the input box), and win7-ansi16 downgrades colour to
-rem the 16 this console has. win7-mintty-tty.cjs does nothing in a real console; it
-rem only activates when this path runs inside mintty, where the three see a non-TTY
-rem and skip, so Pi still starts interactive there. On Windows 10 and later the three do
-rem nothing at all, because that console draws the frame itself.
+rem win7-boxascii draws the borders in one-column ASCII and redraws the startup logo as
+rem four cells of cell-background colour -- coral bar, blue stem, yellow dot -- because a 936
+rem code page draws box drawing and blocks with a CJK font wider than the cell, which breaks
+rem the frame and smears the half-block art. Spaces and background colours are one cell in
+rem every font, so the logo survives the code page. win7-ansi16 downgrades colour
+rem to the 16 this console has. win7-mintty-tty.cjs does nothing in a real console; it only activates
+rem when this path runs inside mintty, where the three see a non-TTY and skip, so Pi still
+rem starts interactive there. On Windows 10 and later the colour shim stands down because
+rem that console draws colour itself; the glyph shim still applies while the console runs
+rem on a Chinese, Japanese or Korean code page, because the width of those glyphs follows
+rem the code page there just as it does below Windows 10. A terminal that draws the screen
+rem itself (Windows Terminal, VS Code, WezTerm) uses its own font, so the shim steps aside
+rem there and keeps the native frame and logo.
 "%ROOT%node\node.exe" --require "%ROOT%win7-tty-width.cjs" --require "%ROOT%win7-boxascii.cjs" --require "%ROOT%win7-ansi16.cjs" --require "%ROOT%win7-mintty-tty.cjs" "%ROOT%pi\node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js" %*
 exit /b %ERRORLEVEL%

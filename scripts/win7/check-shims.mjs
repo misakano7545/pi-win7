@@ -37,8 +37,9 @@ const PI_BAT_SHIMS = ["win7-tty-width.cjs", "win7-boxascii.cjs", "win7-ansi16.cj
 
 /**
  * A console that reports a given OS version, because that version is what puts each
- * compatibility shim on or off: Windows 7 (6.1) needs them, Windows 10 (10.0) draws the
- * frame natively. The machine running this check is never the one under test.
+ * compatibility shim on or off: Windows 7 (6.1) needs all of them, while from Windows 10
+ * (10.0) on the colour shim stands down and the glyph shim stays for a CJK code page only.
+ * The machine running this check is never the one under test.
  */
 const WIN32_CONSOLE = (release, extra = "") => `Object.defineProperty(process, "platform", { value: "win32" });
 Object.defineProperty(require("node:os"), "release", { value: () => "${release}", configurable: true });
@@ -96,14 +97,42 @@ const COLOUR_OUT = "\u001b[91mR\u001b[91mR\u001b[104mB\u001b[0m\u001b[31mplain\n
 const GLYPHS_IN = "─│┌▶• 中文测试\n";
 const GLYPHS_OUT = "-|+>* 中文测试\n";
 
+/**
+ * From Windows 10 on the glyph shim decides by code page (its own font clips the glyphs
+ * just as Windows 7 wraps them) and gives way to a terminal that draws the screen itself.
+ * Both are environment answers, so both are faked here.
+ */
+const CODEPAGE = (page) => `process.env.PI_WIN7_CONSOLE_CODEPAGE = "${page}";\n`;
+const WINDOWS_TERMINAL = 'process.env.WT_SESSION = "x";\n';
+const VSCODE_TERMINAL = 'process.env.TERM_PROGRAM = "vscode";\n';
+const TALL_LOGO = 'process.env.PI_WIN7_LOGO = "tall";\n';
+
 const TRANSFORM_CASES = [
 	["win7-ansi16.cjs", "downgrades colour on Windows 7", WIN7, COLOUR_IN, COLOUR_OUT],
 	["win7-ansi16.cjs", "leaves Windows 10 colour alone", WIN10, COLOUR_IN, COLOUR_IN],
 	["win7-ansi16.cjs", "downgrades colour on Windows 10 when forced", WIN10 + FORCE_ON, COLOUR_IN, COLOUR_OUT],
 	["win7-ansi16.cjs", "leaves Windows 7 colour alone when told PI_WIN7_CONSOLE_SHIMS=0", WIN7 + FORCE_OFF, COLOUR_IN, COLOUR_IN],
 	["win7-boxascii.cjs", "rewrites glyphs on Windows 7", WIN7, GLYPHS_IN, GLYPHS_OUT],
-	["win7-boxascii.cjs", "leaves Windows 10 glyphs alone", WIN10, GLYPHS_IN, GLYPHS_IN],
+	["win7-boxascii.cjs", "rewrites glyphs on a Windows 10 console with a CJK code page", WIN10 + CODEPAGE(936), GLYPHS_IN, GLYPHS_OUT],
+	["win7-boxascii.cjs", "leaves a Latin Windows 10 console alone", WIN10 + CODEPAGE(437), GLYPHS_IN, GLYPHS_IN],
+	["win7-boxascii.cjs", "leaves Windows Terminal alone", WIN10 + CODEPAGE(936) + WINDOWS_TERMINAL, GLYPHS_IN, GLYPHS_IN],
+	["win7-boxascii.cjs", "leaves VS Code's terminal alone", WIN10 + CODEPAGE(936) + VSCODE_TERMINAL, GLYPHS_IN, GLYPHS_IN],
 	["win7-boxascii.cjs", "rewrites glyphs on Windows 10 when forced", WIN10 + FORCE_ON, GLYPHS_IN, GLYPHS_OUT],
+];
+
+/**
+ * The logo is half-block art, which a CJK console font clips or wraps, so the shim repaints
+ * it as four cells of background colour per row: three coral on the version row, and blue,
+ * blue, yellow on the hint row. Only the colour codes differ by tier -- 16 colours below
+ * Windows 10, 24-bit from Windows 10 on -- so the cases pin the codes and the shape.
+ */
+const LOGO_FRAME =
+	"\u001b[2;1H\u001b[2K \u001b[44m\u001b[38;2;228;138;122m▀\u001b[0m\u001b[38;2;228;138;122m▀█\u001b[0m v1.3.0\n" +
+	"\u001b[3;1H\u001b[2K \u001b[38;2;79;142;179m█▀\u001b[0m \u001b[38;2;234;182;93m█\u001b[0m shift+tab for thinking\n";
+const LOGO_CASES = [
+	["repaints the logo in 16 colours on Windows 7", WIN7, ["\u001b[101m", "\u001b[44m", "\u001b[103m"]],
+	["repaints the logo in 24-bit colour on Windows 10", WIN10 + CODEPAGE(936), ["\u001b[48;2;228;138;122m", "\u001b[48;2;79;142;179m", "\u001b[48;2;234;182;93m"]],
+	["keeps the native logo on a Latin console", WIN10 + CODEPAGE(437), null],
 ];
 
 /** Read back what the TTY shim decided, for the states it has to tell apart. */
@@ -245,6 +274,45 @@ try {
 
 	for (const entry of TRANSFORM_CASES) {
 		expectTransform(entry);
+	}
+
+	// Three coral cells then blue, blue, a blank and yellow, with the version and the hints
+	// left where Pi wrote them.
+	for (const [what, preload, colours] of LOGO_CASES) {
+		let got;
+		try {
+			got = probe(preload, "win7-boxascii.cjs", `process.stdout.write(${JSON.stringify(LOGO_FRAME)});`);
+		} catch (error) {
+			check(`logo ${what}`, false, reason(error));
+			continue;
+		}
+		if (colours === null) {
+			check(`logo ${what}`, got === LOGO_FRAME, got === LOGO_FRAME ? "" : "the native frame was rewritten");
+			continue;
+		}
+		const counts = [3, 2, 1].map((want, index) => got.split(colours[index]).length - 1);
+		check(
+			`logo ${what}`,
+			!got.includes("▀") && counts.every((got, index) => got === [3, 2, 1][index]) &&
+				got.includes("v1.3.0") && got.includes("shift+tab"),
+			`coral/blue/yellow = ${counts.join("/")}`,
+		);
+	}
+
+	// PI_WIN7_LOGO=tall buys back the half cell the default paint cannot show: the bar goes
+	// to the row above and the cursor comes back down, so that move has to be there.
+	try {
+		const tall = probe(WIN10 + CODEPAGE(936) + TALL_LOGO, "win7-boxascii.cjs", `process.stdout.write(${JSON.stringify(LOGO_FRAME)});`);
+		const counts = ["\u001b[48;2;228;138;122m", "\u001b[48;2;79;142;179m", "\u001b[48;2;234;182;93m"]
+			.map((colour) => tall.split(colour).length - 1);
+		check(
+			"logo PI_WIN7_LOGO=tall paints the bar a row up",
+			!tall.includes("▀") && tall.includes("\u001b[1A") && tall.includes("\u001b[1B\u001b[5D") &&
+				counts.join("/") === "4/3/1",
+			`coral/blue/yellow = ${counts.join("/")}`,
+		);
+	} catch (error) {
+		check("logo PI_WIN7_LOGO=tall paints the bar a row up", false, reason(error));
 	}
 
 	for (const { what, preload, expected } of TTY_CASES) {

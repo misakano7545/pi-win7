@@ -142,16 +142,24 @@ cannot scroll the transcript; `node.exe` carries no mouse escape sequence and no
 whole reason it is now the default. In the console, PageUp/PageDown scroll instead --
 libuv translates them to `\x1b[5~` / `\x1b[6~`.
 
-## The console tier: Windows 10 and later draw the colour natively
+## The console tier: colour stands down on Windows 10, glyphs follow the code page
 
-The colour and glyph shims are gated on the OS version, not just on `win32`:
-`os.release()` major < 10 (Windows 7 is 6.1, 8 is 6.2, 8.1 is 6.3) means the old console,
-and 10.0 and up means a console that understands VT output, reports the mouse and draws box
-drawing and true colour properly, so those two stand down there. `pi.bat` decides once with
+The colour shim is gated on the OS version: `os.release()` major < 10 (Windows 7 is 6.1, 8
+is 6.2, 8.1 is 6.3) means a console that needs it, and 10.0 and up means one that
+understands VT output and true colour, so it stands down there. `pi.bat` decides once with
 the bundled Node, exports `PI_WIN7_CONSOLE_SHIMS=1`, and opens mintty only when that is set;
 each shim reads the same version itself. Exporting the variable forces the tier on a newer
 Windows and `=0` forces it off -- that is how to reproduce either path on a machine you
 actually have.
+
+The glyph shim does not follow that tier from Windows 10 on, and gating it there was a bug:
+a Windows 10 conhost keeps the cursor at one cell but still takes the glyph from the CJK
+font, so at 936 the borders come out clipped instead of wrapped and the half-block logo
+smears. It rewrites on every Windows 7 console, and from Windows 10 on decides by code page
+(932/936/949/950/1361 rewrite, a Latin page such as 437 or 65001 leaves the frame alone). A
+terminal that draws the screen itself -- Windows Terminal, VS Code, WezTerm -- uses its own
+font, so `WT_SESSION` or a known `TERM_PROGRAM` makes it step aside and keep the real frame
+and logo.
 
 The width shim is *not* part of that tier, and gating it there was a mistake worth
 remembering. On a Windows 11 console (`os.release()` 10.0.26300) with the shim switched off,
@@ -239,6 +247,14 @@ the borders but the console can then no longer display Chinese at all ("中文�
 "????"), and Windows 7's UTF-8 code page (65001) draws nothing. There is no code-page
 shim, and adding one back would break Chinese.
 
+The startup logo is half-block art that cannot be mapped to ASCII, so it is repainted as
+four cells of background colour per row -- three coral on the version row, blue, blue and a
+yellow dot on the hint row -- because a space is one cell in every font and a background
+fills the whole cell whatever the glyph does. That keeps the native two rows and the
+version/hint positions; `PI_WIN7_LOGO=tall` moves the bar one row up to recover the half
+cell the cell grid cannot paint. Below Windows 10 the paint uses the nearest 16 colours,
+because the colour shim was loaded first and sees the stream before this one.
+
 `win7-ansi16.cjs` rewrites `38;5;N` and `38;2;r;g;b` to the nearest of the 16 colours the
 console has, weighted for the eye. Pi treats every `win32` console as truecolour, which
 is right for Windows 10 and wrong here: truecolour is dropped and 256-colour lands on a
@@ -246,7 +262,8 @@ wrong attribute, so colours vanish and some text turns into inverse blocks. The 
 path is therefore 16-colour with ASCII borders -- this environment's limit, not a
 regression.
 
-The colour and glyph shims take `PI_WIN7_ANSI16=0` / `PI_WIN7_BOXASCII=0` to compare
+The glyph shim takes `PI_WIN7_BOXASCII=0` (and `PI_WIN7_LOGO=tall` for the taller logo),
+the colour one `PI_WIN7_ANSI16=0`, to compare
 against the old behaviour, and none of the three applies when stdout is redirected, so
 `--mode json` output stays clean.
 

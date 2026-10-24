@@ -30,7 +30,7 @@ re-running the checks in this skill.
 | PortableGit `git/` | 2.46.2 | last release supporting Windows 7; supplies bash for Pi's bash tool and mintty, the terminal that can report modified keys |
 | ripgrep `rg.exe` | 14.1.0 | 14.1.1 was built with Rust 1.78, whose Windows targets require Windows 10 |
 | fd `fd.exe` | 10.3.0 | 10.4.0 raised the MSRV to 1.90 and dropped Windows 7 |
-| pi | 1.3.0 | pinned; a bump must leave `check-imports.sh` clean (1.3.0 changed nothing) |
+| pi | 1.4.0 | pinned; a bump must leave `check-imports.sh` clean. 1.3.0 changed nothing in pi-tui; 1.4.0 does -- see below |
 
 pi's real Node floor is 22.12, not the `engines` field's 22.19 -- measured, see
 the table below. Never edit `engines`; it is upstream's publish contract and a
@@ -82,7 +82,7 @@ refreshing.
 ## What is verified, and what is not
 
 Verified on real hardware -- Windows 7 Enterprise SP1 (6.1.7601), PowerShell 2.0,
-`verify.ps1` run straight out of the archive:
+`verify.ps1` run straight out of the archive, against the 1.3.0 package:
 
 | Check | Result |
 |---|---|
@@ -93,13 +93,15 @@ Verified on real hardware -- Windows 7 Enterprise SP1 (6.1.7601), PowerShell 2.0
 | `fd --version` | fd 10.3.0 |
 
 The central bet holds: a Node build with the Windows 8+ imports removed does start
-pi on Windows 7, and PowerShell 2.0 runs verify.ps1.
+pi on Windows 7, and PowerShell 2.0 runs verify.ps1. Nothing below the pi row changes
+between 1.3.0 and 1.4.0 -- the runtime, git and the two commodity tools are the same
+pinned archives -- but `pi --version` on 1.4.0 has not been seen on hardware yet.
 
 Verified here (no Windows involved):
 
 - `gypfile` count 0; the two wasm deps (`photon-node`, `quickjs-wasi`) are
-  platform-independent.
-- pi tree starts on Node and prints `1.3.0`; `-p` reaches the missing-credential
+  platform-independent. 1.4.0 adds one pure-JS dependency, `marked-cjk-friendly`.
+- pi tree starts on Node and prints `1.4.0`; `-p` reaches the missing-credential
   path; `list` works after the esbuild strip.
 - Import tables: `node.exe`, `rg.exe`, `fd.exe` and `pi-tui`'s
   `win32-platform.node` import nothing newer than Windows Vista.
@@ -114,8 +116,9 @@ that Windows 7 runs it. `verify.ps1` on the real machine is the only evidence.
 
 ## Terminal behaviour on Windows 7
 
-Measured on the real machine with pi 1.2.0 (1.3.0 leaves pi-tui untouched,
-so these still describe the packaged TUI): the console is code page 936, has 16
+Measured on the real machine with pi 1.2.0; 1.3.0 left pi-tui untouched, so these still
+describe it. 1.4.0 changes pi-tui -- see the exit-restore note below before trusting the
+console tier on it. The console is code page 936, has 16
 colours (`hasColors()=true`, `hasColors(256)=false`, `getColorDepth()=4`) and reports
 120x33 after pi.bat's `mode con`. It has no VT support, so it does not draw Pi's TUI
 unaided: Pi classifies every `win32` console as truecolour, and

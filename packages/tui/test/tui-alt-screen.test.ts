@@ -6,6 +6,7 @@ import {
 	findAltScreenSearchMatches,
 } from "../src/alt-screen-search.ts";
 import { Box } from "../src/components/box.ts";
+import { Editor } from "../src/components/editor.ts";
 import { HStack } from "../src/components/h-stack.ts";
 import { Image } from "../src/components/image.ts";
 import { MouseRegion } from "../src/components/mouse-region.ts";
@@ -21,9 +22,10 @@ import {
 	resetCapabilitiesCache,
 	setCapabilities,
 } from "../src/terminal-image.ts";
-import { renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
+import { CURSOR_MARKER, renderFakeCursor, type TuiMouseEvent } from "../src/tui.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
+import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -63,6 +65,34 @@ class RecordingTerminal extends VirtualTerminal {
 }
 
 describe("TuiAltScreen", () => {
+	it("does not leak cursor markers while selecting after the caret", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { copyOnSelect: false });
+		// Regression for #9257 and #9332: selection slicing must not duplicate cursor markers.
+		tui.addChild({
+			render: () => [`ab${CURSOR_MARKER}cdefghij`],
+			invalidate() {},
+		});
+
+		tui.start();
+		await terminal.waitForRender();
+		const eventCount = terminal.events.length;
+
+		terminal.sendInput("\x1b[<0;5;1M");
+		terminal.sendInput("\x1b[<32;7;1M");
+		await terminal.waitForRender();
+
+		const output = terminal.events
+			.slice(eventCount)
+			.filter((event) => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		assert.ok(output.includes("\x1b[7m"), "dragged text should be highlighted");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		terminal.sendInput("\x1b[<0;7;1m");
+		tui.stop();
+	});
+
 	it("renders a terminal-height viewport and preserves manual scroll position", async () => {
 		const terminal = new VirtualTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
@@ -2145,6 +2175,83 @@ describe("TuiAltScreen", () => {
 		await terminal.waitForRender();
 		assert.ok(tui.viewportTop < topBefore);
 		assert.ok(terminal.getViewport().some((line) => line.includes("↑ ↓")));
+		tui.stop();
+	});
+
+	it("defers viewport keys to a focused list instead of scrolling the transcript (#7629)", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal);
+		const list = new SelectList(
+			Array.from({ length: 12 }, (_, index) => ({ value: `item-${index}`, label: `item-${index}` })),
+			3,
+			{
+				selectedPrefix: (text) => text,
+				selectedText: (text) => text,
+				description: (text) => text,
+				scrollInfo: (text) => text,
+				noMatch: (text) => text,
+			},
+		);
+		tui.addChild(new Text(Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.addChild(list);
+		tui.setFocus(list);
+		tui.start();
+		await terminal.waitForRender();
+		const topBefore = tui.viewportTop;
+
+		terminal.sendInput("\x1b[6~"); // PageDown
+		terminal.sendInput("\x1b[1;5H"); // Ctrl+Home
+		await terminal.waitForRender();
+		assert.strictEqual(list.getSelectedItem()?.value, "item-3");
+		assert.strictEqual(tui.viewportTop, topBefore);
+		tui.stop();
+	});
+
+	it("gives viewport keys back to the transcript when editor autocomplete closes (#7629)", async () => {
+		const terminal = new VirtualTerminal(40, 8);
+		const tui = new TuiAltScreen(terminal);
+		const editor = new Editor(tui, defaultEditorTheme);
+		let submitted = "";
+		editor.onSubmit = (text) => {
+			submitted = text;
+		};
+		editor.setAutocompleteProvider({
+			getSuggestions: async () => ({
+				items: Array.from({ length: 12 }, (_, index) => ({
+					value: `/command-${index}`,
+					label: `command-${index}`,
+				})),
+				prefix: "/",
+			}),
+			applyCompletion: (lines, cursorLine, _cursorCol, item) => ({
+				lines: lines.map((line, index) => (index === cursorLine ? item.value : line)),
+				cursorLine,
+				cursorCol: item.value.length,
+			}),
+		});
+		tui.addChild(new Text(Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n"), 0, 0));
+		tui.addChild(editor);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("/");
+		await new Promise((resolve) => setImmediate(resolve));
+		await terminal.waitForRender();
+		assert.strictEqual(editor.isShowingAutocomplete(), true);
+		const topWithMenu = tui.viewportTop;
+		terminal.sendInput("\x1b[6~"); // PageDown pages the menu
+		await terminal.waitForRender();
+		assert.strictEqual(tui.viewportTop, topWithMenu);
+
+		terminal.sendInput("\r");
+		await terminal.waitForRender();
+		assert.strictEqual(submitted, "/command-5");
+		assert.strictEqual(editor.isShowingAutocomplete(), false);
+		const topWithoutMenu = tui.viewportTop;
+		terminal.sendInput("\x1b[5~"); // PageUp scrolls the transcript again
+		await terminal.waitForRender();
+		assert.ok(tui.viewportTop < topWithoutMenu);
 		tui.stop();
 	});
 });

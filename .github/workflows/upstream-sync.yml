@@ -178,9 +178,12 @@ jobs:
             else
               git tag "$tag"
               git push origin "$tag"
-              # A tag pushed with this token starts no workflow run (only workflow_dispatch
-              # and repository_dispatch do), so ask win7-package.yml for the release.
-              gh workflow run win7-package.yml --ref "$tag"
+              # A tag pushed with the run token starts no run, and one pushed with SYNC_TOKEN
+              # does, so only ask for the release in the first case. -R: with an `upstream`
+              # remote present gh resolves the wrong repository.
+              if [[ -z "$SYNC_TOKEN" ]]; then
+                gh workflow run win7-package.yml -R "$GITHUB_REPOSITORY" --ref "$tag"
+              fi
               published=1
             fi
           fi

@@ -33,10 +33,14 @@ jobs:
       BRANCH: upstream-sync
     steps:
       # Unlike every other workflow here, this one pushes, so it keeps the token in the
-      # remote instead of persist-credentials: false.
+      # remote instead of persist-credentials: false. SYNC_TOKEN is an owner PAT with the
+      # Workflows permission, because a run token is refused any push that edits a workflow
+      # file and upstream edits its own every week. Without the secret the push falls back to
+      # the run token, and the guard further down still hands those merges to a human.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -130,13 +134,15 @@ jobs:
         if: steps.pin.outputs.work == '1'
         env:
           GH_TOKEN: ${{ github.token }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           set -euo pipefail
           # No token a workflow run is given may push a workflow file -- there is no
           # `workflows` key in a permissions block, by design -- and upstream edits its own
-          # workflows regularly. Name that case instead of failing on the raw rejection.
+          # workflows regularly. Name that case instead of failing on the raw rejection,
+          # unless SYNC_TOKEN (an owner PAT with that grant) is doing the push.
           workflow_files="$(git diff --name-only main...HEAD -- .github/workflows/)"
-          if [[ -n "$workflow_files" ]]; then
+          if [[ -n "$workflow_files" && -z "$SYNC_TOKEN" ]]; then
             echo "::warning::this merge changes $workflow_files, which a run token cannot push"
             echo "::notice::land it with: git fetch upstream main && git merge upstream/main && git push origin main"
             {

@@ -321,24 +321,25 @@ Re-distribution caveat: the Node runtime comes from a repository with no license
 file, so shipping it is a deliberate decision that must be stated in the release
 notes.
 
-`upstream-sync.yml` adopts a newer npm release on the sync branch -- it never pushes main
-and never releases. A token a workflow run is given can never push a workflow file (there
-is no `workflows` key in a `permissions` block, by design), so a sync whose merge touches
-`.github/workflows/` stops and prints the hand-merge command instead: do that over SSH or
-HTTPS as yourself, where ordinary write access is enough.
-
 `README.txt` starts with a UTF-8 BOM on purpose, for one line: `by MisakaNo小御坂`.
 Windows 7 Notepad cannot detect UTF-8 without a BOM, so the credit would open as
 mojibake there (GitHub and every modern editor ignore it). Keep the BOM when editing
 the file, and remember it is not in `CHECKSUMS.txt`, which lists binaries only.
 
-`upstream-sync.yml` adopts a newer npm release of pi: it bumps the pin on the sync branch,
-verifies the package against it, and then lands main, tags `win7-v<version>-1` and dispatches
-`win7-package.yml` for the release -- but only when the new release left `pi-tui` untouched,
-because a TUI change is what the console shims exist for and only the target machine can judge
-it. Two cases stop short and hand over commands instead: a merge that touches
-`.github/workflows/` (no run token may push those -- a `permissions` block has no `workflows`
-key, by design) and a conflict. Both land over SSH, where ordinary write access is enough.
-A tag pushed by that token starts no workflow run -- only `workflow_dispatch` and
-`repository_dispatch` do -- which is why the release is dispatched explicitly, and why the
-commit this job lands on main runs the sync's own checks rather than `ci.yml`.
+`upstream-sync.yml` bumps the pin on a sync branch, verifies the package against it, and then
+lands main, tags `win7-v<version>-1` and dispatches `win7-package.yml` -- but only when the run
+also adopted a newer npm release that left `pi-tui` untouched, because a TUI change is what the
+console shims exist for and only the target machine can judge it. A merge that only catches up
+with upstream's source therefore never reaches main on its own: the job force-pushes
+`upstream-sync` and names the pull request, and landing it stays a human step.
+
+A token a workflow run is given can never push a workflow file (a `permissions` block has no
+`workflows` key, by design), and upstream edits its own every week. The job pushes with
+`secrets.SYNC_TOKEN` once it is set -- an owner fine-grained PAT with Contents and Workflows
+write on this repository -- and otherwise stops and prints the hand-merge command. A tag pushed
+by that token starts no run, which is why the release is dispatched explicitly.
+
+The `Nix` workflow is disabled in this repository on purpose: its `commit-pin` job pushes
+`chore: update Nix model catalog pin` straight to main, and since upstream rewrites the same
+one-line `nix/model-catalog.json` at every release, the two writers conflict on every merge.
+Leave it disabled, and resolve that file towards upstream if a merge touches it.

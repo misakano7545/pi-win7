@@ -326,18 +326,17 @@ Windows 7 Notepad cannot detect UTF-8 without a BOM, so the credit would open as
 mojibake there (GitHub and every modern editor ignore it). Keep the BOM when editing
 the file, and remember it is not in `CHECKSUMS.txt`, which lists binaries only.
 
-`upstream-sync.yml` bumps the pin on a sync branch, verifies the package against it, and then
-lands main, tags `win7-v<version>-1` and dispatches `win7-package.yml` -- but only when the run
-also adopted a newer npm release that left `pi-tui` untouched, because a TUI change is what the
-console shims exist for and only the target machine can judge it. A merge that only catches up
-with upstream's source therefore never reaches main on its own: the job force-pushes
-`upstream-sync` and names the pull request, and landing it stays a human step.
+`upstream-sync.yml` bumps the pin on a sync branch, verifies the package against it, lands main,
+then tags `win7-v<version>-1` and dispatches `win7-package.yml` on that tag. It lands whether or
+not `pi-tui` changed: only the target machine can judge the console, so the run summary says when
+pi-tui moved and the release is pulled back by hand if the shims misbehave.
 
 A token a workflow run is given can never push a workflow file (a `permissions` block has no
 `workflows` key, by design), and upstream edits its own every week. The job pushes with
-`secrets.SYNC_TOKEN` once it is set -- an owner fine-grained PAT with Contents and Workflows
-write on this repository -- and otherwise stops and prints the hand-merge command. A tag pushed
-by that token starts no run, which is why the release is dispatched explicitly.
+`secrets.SYNC_TOKEN` -- an owner fine-grained PAT with Contents and Workflows write on this
+repository -- and only falls back to stopping and printing the hand-merge command when that
+secret is missing. A tag pushed by that token starts no run, which is why the release is
+dispatched explicitly.
 
 The `Nix` workflow is disabled in this repository on purpose: its `commit-pin` job pushes
 `chore: update Nix model catalog pin` straight to main, and since upstream rewrites the same

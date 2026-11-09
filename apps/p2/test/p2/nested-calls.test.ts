@@ -6,6 +6,7 @@ import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai"
 import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
+import { scriptCalls } from "../../plugins/codemode/nested.ts";
 import { buildTranscript } from "../../src/web/transcript.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
 import { Browser, browserTests } from "./browser.ts";
@@ -95,10 +96,13 @@ function settled(): ConversationView {
 	};
 }
 
-const calls = (view: ConversationView) =>
-	buildTranscript(wholeView(view))
+/** The script's calls, as code mode's contribution reads them (live, or its result's list). */
+const calls = (view: ConversationView) => {
+	const tool = buildTranscript(wholeView(view))
 		.items.flatMap((item) => (item.type === "assistant" ? item.tools : []))
-		.find((tool) => tool.name === "codemode")?.calls ?? [];
+		.find((each) => each.name === "codemode");
+	return (tool && scriptCalls(tool)) ?? [];
+};
 
 test("a call interrupted by a restart is interrupted, live and settled; other errors stay errors", () => {
 	assert.deepEqual(
@@ -120,6 +124,7 @@ test(
 		let browser: Browser | undefined;
 		try {
 			browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			await browser.metrics(390, 844);
 			await browser.open(`http://127.0.0.1:${fixture.server.port}`);
 			await browser.wait("document.querySelector('.app')");
@@ -132,7 +137,7 @@ test(
 			await browser.wait("document.querySelector('[data-testid=activity][data-state=working]')");
 			await browser.click("[data-testid=activity]");
 			await browser.wait("document.querySelector('[data-testid=step] button')");
-			await browser.click("[data-testid=step] button");
+			// The running script is already expanded in the selected block's panel.
 			await browser.click("[data-testid=calls-more]");
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
 			// The first failed, the ninth was interrupted by a restart (a failure too), the tenth runs.

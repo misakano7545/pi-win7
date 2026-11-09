@@ -8,8 +8,10 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
 import type { ConversationView, EntryId, LiveState } from "@earendil-works/pi-durable";
 import type { CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
 import { stripTerminalSequences } from "@earendil-works/pi-tui";
+import { scriptCalls } from "../../plugins/codemode/nested.ts";
 import { transcriptComponent } from "../../src/tui/messages.ts";
 import { buildTranscript, type ToolView } from "../../src/web/transcript.ts";
+import { PLUGIN_TUI_RENDERERS } from "../fixtures/tui-tools.ts";
 import { wholeView } from "../fixtures/whole-view.ts";
 import { Browser, browserTests } from "./browser.ts";
 import { startFixture } from "./helpers.ts";
@@ -125,10 +127,16 @@ function settled(): ConversationView {
 	};
 }
 
-const codemode = (view: ConversationView): ToolView | undefined =>
-	buildTranscript(wholeView(view))
+/** The script's call, with its calls as code mode's contribution reads them (live, or its result's list). */
+const codemode = (view: ConversationView): ToolView | undefined => {
+	const tool = buildTranscript(wholeView(view))
 		.items.flatMap((item) => (item.type === "assistant" ? item.tools : []))
-		.find((tool) => tool.id === CALL);
+		.find((each) => each.id === CALL);
+	if (!tool) return;
+	const { calls: _, ...rest } = tool;
+	const calls = scriptCalls(tool);
+	return calls ? { ...rest, calls } : rest;
+};
 
 test("live nested calls are grouped under the model's call, with depth from the parent chain", () => {
 	const card = codemode(running());
@@ -188,7 +196,7 @@ test("settled calls come from the result's details.calls", () => {
 
 test("TUI shows pi's code mode card: the script, the newest nested calls by depth, then the output", () => {
 	const render = (view: ConversationView, expanded = false) =>
-		transcriptComponent(buildTranscript(wholeView(view)), false, expanded)
+		transcriptComponent(buildTranscript(wholeView(view)), false, expanded, { renderers: PLUGIN_TUI_RENDERERS })
 			.render(120)
 			.map((line) => stripTerminalSequences(line).trimEnd())
 			.join("\n");
@@ -218,6 +226,7 @@ test(
 		let browser: Browser | undefined;
 		try {
 			browser = await Browser.start();
+			await browser.signIn(fixture.owner);
 			await browser.metrics(390, 844);
 			await browser.open(`http://127.0.0.1:${fixture.server.port}`);
 			await browser.wait("document.querySelector('.app')");
@@ -236,7 +245,7 @@ test(
 				await browser.evaluate<string>("document.querySelector('[data-testid=step]').textContent"),
 				/^codemoderead every file● running/,
 			);
-			await browser.click("[data-testid=step] button");
+			// The running step is expanded when the panel opens.
 			// The newest eight calls, the rest behind "Show all", as the transcript's card had them.
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===8");
 			assert.equal(
@@ -247,8 +256,10 @@ test(
 			await browser.click("[data-testid=calls-more]");
 			await browser.wait("document.querySelectorAll('[data-testid=call]').length===10");
 			assert.equal(
-				await browser.evaluate("document.querySelector('.sheet-head h2').textContent"),
-				"Ran a script · 10 calls, 1 failed",
+				await browser.evaluate(
+					"document.querySelector('[data-testid=step] > button').getAttribute('aria-expanded')",
+				),
+				"true",
 			);
 			// The script: highlighted JS, whole (8 lines need no Show all).
 			assert.equal(
@@ -267,6 +278,16 @@ test(
 			assert.match(
 				await browser.evaluate<string>(`${call(9)}.textContent`),
 				/Running npm test.*running tests|npm test.*running tests/,
+			);
+			// Nested calls expand beneath their own rows without replacing the script or its siblings.
+			await browser.evaluate(`${call(9)}.querySelector('button').click()`);
+			await browser.wait(
+				"document.querySelector('.nested-detail pre.detail-output')?.textContent==='building\\nrunning tests'",
+			);
+			assert.equal(await browser.evaluate("document.querySelectorAll('[data-testid=call]').length"), 10);
+			assert.equal(
+				await browser.evaluate("document.querySelector('[data-testid=detail-input] .hljs-keyword')!==null"),
+				true,
 			);
 			// Settled: the result's calls; a cancelled one is interrupted, a failure.
 			await show(settled());

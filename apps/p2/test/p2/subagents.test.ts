@@ -98,12 +98,12 @@ describe("subagents (fake provider)", () => {
 
 	it("configures tools and opens a child's independent transcript", async () => {
 		await chat.send({ text: "subagent-configure", requestId: "configure" }, BACKGROUND_CONTEXT);
-		await until(children.children, (value) => value?.[session]?.[0]?.tools.join() === "bash,artifact");
+		await until(children.children, (value) => value?.[session]?.[0]?.tools.join() === "bash,read");
 		const sub = await holdIn(owner, Chat, { session, conversation: child.conversationId }, "participant");
 		const view = await until(sub.view, (value) => texts(value).includes("Echo: hello helper"));
 		// The sidebar lists the chosen tools; the agent also has `team` (`scope: "subagent"`), offered from the start.
 		const agent = view?.docs["pi.agent"] as { tools: string[]; modelTools: { add: string[] } };
-		assert.deepEqual(agent.tools, ["bash", "artifact", "team"]);
+		assert.deepEqual(agent.tools, ["bash", "read", "team"]);
 		assert.deepEqual(agent.modelTools.add, ["team"]);
 		await sub.configure({ model: { provider: "faux", modelId: "faux-1" }, thinkingLevel: "off" }, BACKGROUND_CONTEXT);
 		await until(children.children, (value) => value?.[session]?.[0]?.thinkingLevel === "off");
@@ -342,14 +342,21 @@ describe("subagents with code mode (fake provider)", () => {
 		);
 		return results(await until(chat.view, (view) => results(view).length > count)).at(-1)!;
 	};
-	/** Waits until `name`'s answer was reported and the main agent's turn on it ended, so it cannot race a later send. */
-	const reported = (name: string) =>
+	/**
+	 * Waits until `name`'s answer was reported after entry `after` and the main agent's turn on it ended, so it cannot
+	 * race a later send. A subagent asked again reports again: without `after`, its earlier report would satisfy the
+	 * wait at once, and the new one would arrive with the next test's input (the faux model answers only the last).
+	 */
+	const reported = (name: string, after = 0) =>
 		until(
 			chat.view,
 			(view) =>
-				texts(view).includes(`<sender kind="subagent" name="${name}"/>`) &&
-				!(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
+				texts({ ...view!, entries: (view?.entries ?? []).filter((entry) => entry.id > after) }).includes(
+					`<sender kind="subagent" name="${name}"/>`,
+				) && !(view?.docs["pi.live"] as { run?: unknown } | undefined)?.run,
 		);
+	/** The newest entry of the main conversation's window: what a later report must follow. */
+	const newest = () => chat.view.value?.entries.at(-1)?.id ?? 0;
 	const results = (view: ConversationView | null | undefined) =>
 		(view?.entries ?? [])
 			.flatMap((entry) => entry.model ?? [])
@@ -464,13 +471,14 @@ describe("subagents with code mode (fake provider)", () => {
 						message.role === "toolResult" && message.toolName === "codemode",
 				);
 		const before = scripts().length;
+		const sentAfter = newest();
 		const script = 'return await tools.mcp__files__echo({ text: "from coder" });';
 		await subagent({ action: "send", name: "coder", message: `codemode ${script}` });
 		await until(sub.view, () => scripts().length > before);
 		const ran = scripts().at(-1);
 		assert.equal(ran?.isError, false, text(ran));
 		assert.match(text(ran), /echo: from coder$/);
-		await reported("coder");
+		await reported("coder", sentAfter);
 		sub.release();
 		mcp.release();
 	});

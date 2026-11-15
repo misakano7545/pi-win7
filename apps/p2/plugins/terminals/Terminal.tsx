@@ -10,9 +10,11 @@ import {
 	PanelSideIcon,
 	PlusIcon,
 	type ReconnectLink,
+	type Route,
 	type SocketEvents,
+	useDragSize,
 } from "@p2/app/v1/web";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Terminals } from "./contract.ts";
 import {
 	BOLD,
@@ -81,6 +83,17 @@ export function setTerminalPlacement(placement: TerminalPlacement): void {
 	try {
 		localStorage.setItem(PLACEMENT, placement);
 	} catch {}
+}
+
+/** Whether `route` shows its session's terminal: below the chat, or on the workspace's Terminal tab. */
+export const terminalShown = (route: Route): boolean =>
+	route.terminal !== undefined || route.workspace?.tab === "terminal";
+
+/** `route` with its session's terminal shown where the reader last had it, starting one if the session has none. */
+export function withTerminal(route: Route): Route {
+	return terminalPlacement() === "bottom"
+		? { ...route, terminal: "", startTerminal: true }
+		: { ...route, workspace: { tab: "terminal", directory: route.workspace?.directory ?? "", startTerminal: true } };
 }
 
 /** Whether the row of extra keys shows. Kept per browser; by default only on touch screens. */
@@ -314,8 +327,13 @@ class TerminalSession {
 	#frame = 0;
 	#connection?: { stop(): void };
 	#stopped = false;
-	/** Open a terminal if the first listing has none (`start`); later reconnects only reattach. */
-	#autoOpen: boolean;
+	/**
+	 * What the next listing does: attach the preferred or newest terminal, opening one if there is none (`start`, the
+	 * first listing only), or open a new one (`openNew` before it). Later reconnects only reattach.
+	 */
+	#onList: "attach" | "start" | "new";
+	/** A listing arrived since the channel opened: a terminal opened now is not replaced by the listing's attach. */
+	#listed = false;
 	#cell = { width: 8, height: 16 };
 	#resize: ResizeObserver;
 	/** The app's light/dark switch, which programs in the terminal hear about through the host. */
@@ -370,7 +388,7 @@ class TerminalSession {
 		this.#control = options.control;
 		this.#conversation = options.conversation;
 		if (options.terminalId) this.#preferred = options.terminalId;
-		this.#autoOpen = options.start;
+		this.#onList = options.start ? "start" : "attach";
 		this.#screen = options.screen;
 		this.#input = options.input;
 		this.#onState = options.onState;
@@ -458,6 +476,12 @@ class TerminalSession {
 		this.#themeObserver.disconnect();
 		this.#vt?.free();
 		this.#vt = undefined;
+	}
+
+	/** Opens a new terminal now, or once the channel listed the terminals (before that, the listing would replace it). */
+	openNew(): void {
+		if (this.#listed && this.#socket?.readyState === WebSocket.OPEN) this.open();
+		else this.#onList = "new";
 	}
 
 	open(): void {
@@ -949,6 +973,7 @@ class TerminalSession {
 			channel.onopen = () => {
 				if (ended) return;
 				events.opened();
+				this.#listed = false;
 				this.#emit({ connected: true, error: undefined, outdated: undefined });
 				// First: terminals opened or attached afterwards answer color queries in these colors.
 				this.#request((control) => control.theme(this.#theme(), BACKGROUND_CONTEXT));
@@ -998,11 +1023,13 @@ class TerminalSession {
 					event.terminals.find((terminal) => terminal.id === wanted) ??
 					running.toSorted((a, b) => b.createdAt - a.createdAt)[0];
 				this.#preferred = undefined;
-				if (target) {
+				if (this.#onList === "new") this.open();
+				else if (target) {
 					this.#emit({ current: undefined });
 					this.#request((control) => control.attach({ terminalId: target.id }, BACKGROUND_CONTEXT), true);
-				} else if (this.#autoOpen) this.open();
-				this.#autoOpen = false;
+				} else if (this.#onList === "start") this.open();
+				this.#onList = "attach";
+				this.#listed = true;
 				return;
 			}
 			case "terminals": {
@@ -1244,6 +1271,7 @@ export function TerminalView({
 	conversation = 1,
 	terminalId,
 	start = false,
+	newTerminal,
 	onTerminal,
 	placement,
 	onMove,
@@ -1256,6 +1284,8 @@ export function TerminalView({
 	terminalId?: string;
 	/** Start a terminal if the session has none: the user just opened this view. */
 	start?: boolean;
+	/** A new terminal asked for from outside the view (the command menu): the view opens one, then calls `taken`. */
+	newTerminal?: { readonly taken: () => void };
 	/** The shown terminal, for the route. */
 	onTerminal: (terminalId: string) => void;
 	placement: TerminalPlacement;
@@ -1312,6 +1342,14 @@ export function TerminalView({
 			session.current = undefined;
 		};
 	}, [control]);
+
+	// After the session above: a view opening with the request opens the new terminal instead of attaching one.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: control makes the session above; a request waits for it.
+	useEffect(() => {
+		if (!newTerminal || !session.current) return;
+		session.current.openNew();
+		newTerminal.taken();
+	}, [newTerminal, control]);
 
 	// Back or Forward to another terminal of this session.
 	useEffect(() => {
@@ -1530,44 +1568,17 @@ export function TerminalView({
 /** The terminal below the chat; its top edge drags to resize it. */
 export function TerminalPanel(props: Omit<Parameters<typeof TerminalView>[0], "placement">) {
 	const panel = useRef<HTMLElement>(null);
-	const [height, setHeight] = useState(() => Number(localStorage.getItem("p2-terminal-height")) || undefined);
-	// Like the workspace's width: the handle captures the pointer, and only the CSS variable changes while dragging.
+	const height = useDragSize("p2-terminal-height", "--terminal-height");
 	const startResize = (event: React.PointerEvent<HTMLButtonElement>) => {
 		const element = panel.current;
 		const parent = element?.parentElement;
-		if (!element || !parent || (event.pointerType === "mouse" && event.button !== 0)) return;
-		event.preventDefault();
-		const handle = event.currentTarget;
-		const pointer = event.pointerId;
-		handle.setPointerCapture(pointer);
+		if (!element || !parent) return;
 		const bottom = element.getBoundingClientRect().bottom;
 		const limit = parent.getBoundingClientRect().height * 0.85;
-		let last = height;
-		const move = (moved: PointerEvent) => {
-			if (moved.pointerId !== pointer) return;
-			last = Math.round(Math.min(Math.max(bottom - moved.clientY, 120), limit));
-			element.style.setProperty("--terminal-height", `${last}px`);
-		};
-		const end = (ended: PointerEvent) => {
-			if (ended.pointerId !== pointer) return;
-			handle.removeEventListener("pointermove", move);
-			handle.removeEventListener("pointerup", end);
-			handle.removeEventListener("pointercancel", end);
-			if (!last) return;
-			setHeight(last);
-			localStorage.setItem("p2-terminal-height", String(last));
-		};
-		handle.addEventListener("pointermove", move);
-		handle.addEventListener("pointerup", end);
-		handle.addEventListener("pointercancel", end);
+		height.drag(event, element, (moved) => Math.min(Math.max(bottom - moved.clientY, 120), limit));
 	};
 	return (
-		<section
-			className="terminal-panel"
-			aria-label="Terminal"
-			ref={panel}
-			style={height ? ({ "--terminal-height": `${height}px` } as CSSProperties) : undefined}
-		>
+		<section className="terminal-panel" aria-label="Terminal" ref={panel} style={height.style}>
 			<button
 				type="button"
 				className="terminal-resize"

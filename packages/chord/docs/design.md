@@ -55,6 +55,7 @@ versions and adapters · 28 building: slices · 29 telemetry · 30 cost model ·
 | object | one instance per (type, params, principal key); `local`: per (type, params) |
 | principal | who calls; stamped by links, typed by the app |
 | reference | what `get` returns; keeps its object alive; live and hydrated when awaited |
+| event member | a JSON value an object emits (`self.events`), delivered once to the references bound to it before the emit (over a link, per wire hold: references sharing one get what arrives after they bound, §7), never kept; read with `ref.member.on(listener, ctx)`, a subscription (section 11) |
 | document | a named JSON value an object owns, written in transactions |
 | derive | a value computed from watchables |
 | live query | a bounded query of an object's own table, kept current by its commits (`self.query`, section 11) |
@@ -128,10 +129,16 @@ export const Catalog = remote("catalog", { hostAddress: () => Server(), … });
   never needs the contract or parses params. **The provider computes it again** from the params: a hold naming this
   host whose params the provider's code places elsewhere (code skew) waits unbound `version` (`failed { waiting }`,
   `invalid/host_address`, dependency model §1; slice 7a); a hold naming another host's address is relayed, never served
-  here (misrouted holds are never captured by a relay that serves the same name).
+  here (misrouted holds are never captured by a relay that serves the same name). These checks (and a relay's
+  `authorize`, and the provider's admission against its contract and accepted versions, §5) run when a new hold is
+  made; a reference joining a held remote object (§7) uses that hold without a new provider or relay admission or
+  snapshot, also while an old attempt drains after a reload; the consuming host still places and admits it (its
+  params, `hostAddress`, a route's `authorize`) before the lookup (decision "References share one wire hold").
 - **Every reference is a request** (dependency model, slice 7a): it has one holder (an attempt, a call, outside code,
   a link's peer) and ends only when its holder ends it (release, a call settling, a getter giving up, the peer's link
   or origin closing, revocation, the host closing), never because its provider is missing, went away or does not fit.
+  A remote reference joining a held remote object (§7) is a holder of that object on this host; the provider sees one
+  hold (decision "References share one wire hold").
 - **Where a reference made on a host, or a hold arriving on one of its links, goes**, by address alone (slice 4a;
   slice 7a: no same-name check on the consumer's host):
 
@@ -261,7 +268,9 @@ host). The workers component (§23) does this.
 | `registry(R, context, { readyTimeout? })` | registry `R`'s composed value for code outside objects once it is usable; while it has none it waits up to its `readyTimeout`, then rejects with the last error (slice 8, 7a, section 17); before `load` it rejects `not_ready` at once |
 
 **Options of `createHost`:** `address`, `principal`, `principalKey` (section 4; the same function on every host),
-`telemetry` (section 29), `onError`, `closeTimeout`, `readyTimeout`, `heartbeat: { ping?, close? }`; later `revokedBy`
+`telemetry` (section 29), `onError`, `closeTimeout`, `readyTimeout`, `heartbeat: { ping?, close? }`, `callWindow` (the
+call window it announces on untrusted links, 10,000) and `eventWindow` (its own `event` messages unacknowledged per link
+and origin, 32; below, "Flow control"); later `revokedBy`
 (section 4, slice 4b) and `store` (section 10, slice 6a: the store, opened by the app with `openStore(backend, ctx)`
 and closed by the app with `store.close(ctx)` after `host.close`; the host never closes it). **`onError`** receives everything that fails in the
 background, as a tagged `HostError`: `listener_error` (a watch listener threw), `delivery_failed` (a frame delivery
@@ -299,7 +308,9 @@ section 21), a job `finish` backs off 1 s to 60 s, provider-side `linger` is per
   method calls running on this host, running jobs, provider-side lingering objects. Counters are kept where the work
   happens; a change marks it dirty and it is published at most once per microtask turn with changes. A hold placed
   here counts from its arrival to its end, bound or not (one waiting for a missing provider keeps the worker alive;
-  slice 7a); a hold this host relays counts at its destination; `host.references` lists bound references only. Core code
+  slice 7a); a hold this host relays counts at its destination; same-host bindings do not count.
+  `host.references` (§19) lists bound holders only: same-host bindings and arriving wire holds. Several references of a
+  consuming host sharing one hold (§7) are one entry there and one count here, until that hold ends. Core code
   reports it plus Durable tasks (the core `Harness`); the server's supervisor stops the worker when all are zero for
   the idle time (p2: 5 minutes, checked every second). Chord provides the counts, no idle logic.
 
@@ -322,10 +333,12 @@ host.route(Session, {
   requester left). A `resolve` that never settles is the app's (it bounds its own `fork`); getters still time out.
 - **Failure and re-resolve** (slice 10 R2, owner, 2026-10-30; replaces the per-address backoff): a route has no
   timer. A rejected `resolve` (reported `resolve_failed`) or a returned link already closed fails the route's holders
-  with its error (`failed`, not an endless `loading`); the route resolves again only for a new hold, on
+  with its error (`failed`, not an endless `loading`); the route resolves again only for a new hold (a reference
+  joining a held remote object on such an address, §7, counts as one), on
   `RouteHandle.retry(address)`, or once after the address's link dropped while holds exist (a drop of a healthy link
   recovers at once; whether a crashed worker comes back is the `resolve`'s answer). `RouteHandle.suspend(address)`
-  (R1) stops resolving an address (its holders stay `loading`) until `retry`. A network route that wants to reconnect
+  (R1) stops resolving an address (its holders stay `loading`) until `retry`; a reference made meanwhile holds on its
+  own and fails `unavailable` (it joins no held object, §7). A network route that wants to reconnect
   keeps its own policy in its `resolve`. The workers component answers a failed address's `resolve` with its stored
   failure at once: workers never restart by themselves (§23).
 - Chord closes a route link itself only at `host.close`, on the heartbeat and on a protocol error; stopping idle
@@ -354,9 +367,10 @@ host.route(Session, {
   (W6).
 - **Roles:** `parent` (made by `connect`), `child` (`accept`), `route` (`resolve`). The role decides whose principal a
   hold acts as (section 4). **Trusted links** are an explicit option (`trusted: true` on `accept`, `connect` and in
-  `resolve`'s result; default untrusted; never inferred from the link kind; owner, 2026-10-23): they skip only the
-  `MESSAGE` schema check; framing, the codec's decode, `checkParams`, `checkArgs` and Delta decoding still run. Trust
-  never grants the principal fields (they are read only on the parent link).
+  `resolve`'s result; default untrusted; never inferred from the link kind; owner, 2026-10-23). Trust decides two
+  things: the `MESSAGE` schema check (skipped; framing, the codec's decode, `checkParams`, `checkArgs` and Delta decoding
+  still run) and the call window (none announced, below; decision "Call windows only for untrusted links"). Trust never
+  grants the principal fields (they are read only on the parent link).
 - **Remote objects belong to a path:** the parent, or a route address. Each new link of a path holds every remote
   object of that path again (with new hold ids); a closed link drops its tables and the objects go `loading`.
 - **Heartbeat on every link kind, in the protocol layer** (owner, 2026-10-23): each link keeps a `lastReceived`
@@ -371,7 +385,7 @@ host.route(Session, {
   silence").
 - **Flow control: an ack-clocked window per origin** (owner, 2026-10-23; per origin 2026-10-24). Per (link, origin), at
   most **K = 2** of the provider's own `bound` and `state` messages are unacknowledged; only these two kinds count
-  (everything else is control, never queued behind them). The consumer sends `ack` (with the message's origin) after
+  (everything else is control, never queued behind them; `event` messages have a window of their own, below). The consumer sends `ack` (with the message's origin) after
   applying each, after its batch; an `ack` crossing nothing in flight is ignored. While the window is full:
   - each touched hold member keeps its ops in its **pending queue** (section 11: raw, never mutated, folded through
     the leaf index, at most 10,000 ops, then only "replace with the current value"); when an `ack` frees a slot, one
@@ -400,17 +414,42 @@ host.route(Session, {
     that does not relay the answer.
   Not built, by decision: a byte window, credit messages, snapshot admission or debt, an adapter `backlog()` API,
   `reset` from anyone.
-- **Calls: a call window N** (default 256, the same on every host) announced in `hello`: how many concurrent calls a
-  side accepts **per origin**. A side sends no call before the peer's `hello`. A host sends at most N of its own calls
+- **Calls: a call window N** announced in `hello`: how many concurrent calls a side accepts **per origin** (decision
+  "Call windows only for untrusted links", owner, 2026-11-11): on a link it was not given as trusted, the host option
+  `callWindow` (default 10,000); on a trusted link none (`hello.calls` absent), so the app's own hosts never queue calls
+  behind each other. A side sends no call before the peer's `hello` ("no hello yet" is a state of its own, apart from
+  "no window"); a side whose peer announced no window sends its calls at once. A host sends at most N of its own calls
   per link in flight; further calls wait in the link's **call queue**, one FIFO, sent in order as replies free slots;
-  nothing is refused for being "too many" (K16). A slot is freed once per call: by its `result` or `error`, its
-  `abort` (when sent, at the caller; when received, at the provider), its hold's `release`, `gone`, its origin's
-  `closed` or the link closing. A call still queued when its hold rebinds (`loading`) is rejected `unavailable` (it may
-  name a method of the old variant); one already sent is answered by the provider (a `loading` unbind keeps it, below). A provider seeing more than N running calls of one origin closes the link
-  (protocol error); a call naming a hold it does not know is ignored before it is counted (Q1). **There is no limit on
+  nothing is refused for being "too many" (K16). The window bounds calls in flight, not calls waiting to be sent: a
+  caller's queue is the caller's (an app's latest-only outbox for motion, `events/spec.md` §7). A slot is freed once
+  per call: by its `result` or `error`, its `abort` (when sent, at the caller; when received, at the provider), its
+  hold's `release`, `gone`, its origin's `closed` or the link closing. A call still queued when its hold rebinds
+  (`loading`) is rejected `unavailable` (it may name a method of the old variant); one already sent is answered by the
+  provider (a `loading` unbind keeps it, below). A provider seeing more than N running calls of one origin closes the
+  link (protocol error), one that announced none never closes it for running calls; a call naming a hold it does not
+  know is ignored before it is counted (Q1). **There is no limit on
   calls in progress per link** (owner, 2026-11-03; Chord v1's `maxCalls` had no counterpart): the call window N per origin
   and the part limits (section 22) are the bounds; 200 concurrent calls over one socket all run, N at a time in
-  flight. A per-link N, if ever needed, must bound a relay's forwarding too.
+  flight. A per-link N, if ever needed, must bound a relay's forwarding too (relays honour each upstream window: below).
+- **Events: an event window per origin** (decision "Events: fire-and-forget members", owner, 2026-11-11). Per (link,
+  origin) the emitting host leaves at most `eventWindow` (default 32) of its own `event` messages unacknowledged; one
+  that finds it full at an event flush (section 11) **drops** that origin's entries of the flush (counted
+  `chord.events.dropped { reason: "window" }`), as they are visited, before a value is encoded or an entry built for
+  them (the window cannot change during a flush; a value admitted for another origin or link is encoded once and its
+  part reused); nothing is queued for later, so the provider holds no backlog for a slow
+  consumer (what is already sent may still sit in transport and proxy buffers: a consumer whose path crosses W workers
+  and the server may have (W + 1) × `eventWindow` in flight). The consumer sends `ack { events: n }` (n at least 1: the
+  `event` messages of that origin it **consumed** since its last such ack: inflated, a browser's asynchronous inflate
+  included, parsed, and its entries delivered or deliberately dropped; never on transport receipt), at most one per
+  origin per inbound turn (coalesced in a microtask after the first message it consumed, so after the event flush that
+  delivered it). An `ack` with `events` acknowledges events only, never combined with a state ack: state's window and
+  its variant fence are untouched, and events flow while the state window is full, and the reverse. **Event tickets:**
+  per link and origin the provider side keeps a FIFO of the `event` messages it sent and not yet had acknowledged,
+  each with its sender, `local` (this host's emits) or the upstream link a relay forwarded it from; `ack { events: n }`
+  consumes exactly the first n: a `local` one frees a slot of the event window, a relayed one is returned to its
+  upstream link as `ack { origin, events }` (summed per link); a ticket of an upstream link that closed is consumed and
+  returned nowhere. A provider side's record is retired only when it has no holds, no calls, no state messages and no
+  event tickets in flight (or its link or origin closes). Late samples are the app's to discard by its own timeline.
 - Holds are not limited by count (authorization and params checks protect them); size limits are a separate check
   (section 22). Byte-heavy traffic (terminals) uses separate channels (section 23), so a large state message never
   holds up keystrokes.
@@ -436,12 +475,26 @@ drops, folds or resets.
   envelope; parts copied once into the outgoing buffer.
 - **What the relay keeps:** per relayed hold, its upstream link and its original `hold` message (params copied once),
   which routes `call`, `abort`, `retry` and `release` upstream at once and holds again on the next link; per
-  downstream origin, the FIFO of the sender of each `bound`/`state` message in flight and the set of upstream links it
-  relayed to.
+  downstream origin, the FIFO of the sender of each `bound`/`state` message in flight, its event tickets, the set of
+  upstream links it relayed to, and per upstream link the queue of its relayed calls past that link's window.
 - **Forwarding up:** `hold`, `call`, `abort`, `retry`, `release` with the origin's number; a hold waiting for its
-  route is sent when the link exists; a `release` before that drops it. A call is forwarded at once; with no upstream
-  link it is answered `unavailable` (it crossed the `loading` notice). Each downstream consumer is bounded by its own
-  N, so the upstream sees at most N per origin.
+  route is sent when the link exists; a `release` before that drops it. With no upstream link a call is answered
+  `unavailable` (it crossed the `loading` notice). **Relays honour each upstream window** (decision "Call windows only
+  for untrusted links"): a downstream origin's calls go upstream under that origin; when the upstream link announced a
+  window, the origin's relayed calls past it wait in a FIFO per (upstream link, origin) and go as answers free slots
+  (the consumer side's window logic), a new call never overtaking the origin's queue (none announced: at once). Queued
+  relayed calls follow the relay's own queued calls' lifecycle: when the relayed hold gets `loading`, its unsent calls
+  are rejected `unavailable` (they carry the old variant's method indexes) and its forwarded ones are kept; on
+  `failed` or `gone` its unsent calls are rejected with that cause; before the relay forwards the downstream's `ack` of
+  a new `bound` upstream (which ends the provider's decoding by the old indexes), it rejects every call of that hold
+  still in its queue `unavailable` (one that crossed the `loading` notice carries the old indexes; calls arriving after
+  that ack were made with the new binding, which a consumer's ack precedes: it acknowledges a `bound` before its
+  reference sends the calls parked while it rebound). `abort` takes a waiting call out unsent (a forwarded one is aborted
+  upstream, then its slot frees), `release` is forwarded upstream first, then the hold's waiting calls are dropped and
+  its forwarded ones free their slots (a call of another hold that takes one reaches the upstream after the release,
+  which ends the forwarded ones there: else an honest finite-window upstream counts one call too many and closes the
+  link), `closed` and an upstream drop end them as the relay's own; a queue entry is removed before its slot is counted
+  free.
 - **Forwarding down:** a message from upstream with an origin goes to that origin's provider side, which forwards it
   with its own origin (none for a tab), ids and parts unchanged. **A link answers only for what was relayed over it**
   (owner, 2026-10-24): every entry of a `bound` or `state`, every `failed`, `loading` and `gone` by its hold, every
@@ -452,13 +505,19 @@ drops, folds or resets.
   state for that origin (the rule above: a worker's answer whose effect the worker pushed to the server arrives after
   that server state); the upstream host sent its own waiting state before its answer, and the relay forwarded that at
   once.
+- **Events** (decision "Events: fire-and-forget members"): a relay forwards an upstream `event` message at once, never
+  dropping it for congestion. A link answers only for what was relayed over it: entries of holds not relayed over the
+  link they came from (released, rebound, from an old upstream link) are filtered out and the message is forwarded with
+  what is left, also with no entries, its ticket naming its upstream link. A relay never acknowledges an `event`
+  message itself: an early ack of a filtered message would consume an upstream ticket of an earlier message still
+  unconsumed downstream (two senders behind an upstream relay), so the downstream's acks, in order, stay the only credit.
 - **Acks:** the relay forwards each upstream `bound`/`state` at once and returns its `ack` to the upstream link that
   sent it when the downstream acknowledges it (the senders FIFO). A tab served by W workers may have 2W messages in
   flight (plus the relay's own 2), each worker's window bounding its own. A slow tab stalls only its origin at each
   worker; other tabs are other origins. Measured: a slow tab through the relay catches up like a direct one (a 60 s
   stall: 0.38 s, 23.7 KiB at 64 KiB/s; before the rework, 24 s and three full snapshots).
 - **Upstream drop:** the relay sends `loading { hold }` downstream for every relayed hold on the dropped link, fails
-  their relayed calls in flight `unavailable` (never resent), re-resolves and holds again upstream from the kept
+  their relayed calls in flight or waiting for its window `unavailable` (never resent), re-resolves and holds again upstream from the kept
   message (same id, same origin); the new `bound` is forwarded. Acks for messages of the dropped link still in flight
   downstream go nowhere.
 - **Downstream drop:** the origin's provider side ends: its served holds are released, its relayed holds forgotten,
@@ -571,7 +630,7 @@ export const NoteStore = local("notes.store", { version, params, members });
 | factory | `(params, principal, self)` returning `{ variant, members }` | `(params, self)` returning the members |
 | arguments | validated once at the provider for every caller (compiled closed schema, R7, Q12); unknown fields rejected; passed by reference on the same host | validated the same way (Q15), never copied |
 | results | not validated; passed by reference on the same host | not validated, not copied |
-| members | state (JSON) and methods (JSON plus bytes) | plain-data state and methods; no `opaque`, no callbacks |
+| members | state (JSON), methods (JSON plus bytes) and events (JSON) | plain-data state, methods and events (`event(schema)`); no `opaque`, no callbacks |
 | `ctx.principal` in methods | the caller | the host's principal (none on a client); references a local object makes act as the host |
 
 ```ts
@@ -591,14 +650,33 @@ host.serve(Notes, ({ session }, principal, self) =>
   counted pin: the key stays loaded while the consumer lives) or `ref.notes.watch(key, ctx)`/`get(key, ctx)` anywhere;
   an absent key reads `initial()`, a retirement arrives as the `retired` flag (a derive over it carries the flag on).
   Across links, a view per entity (`NoteView { session, id }`) is held as an ordinary remote object.
+  **Host-keyed members** (decision "Documents and table rows can belong to a host", 2026-11-09; spec
+  `host-keyed/spec.md` §1): `keyed(schema, Session)` keys the member by addresses of a host kind; its implementation is
+  a handle of a definition keyed by that kind (`keyed: Session`; another key kind fails the activation), the
+  reference's member takes addresses (`ref.meta.at(Session({ id }))`, checked and encoded to the canonical key), and
+  the kind's name joins the member's normal form (`{ keyed, key }`; string-keyed members keep their fingerprints). A
+  changed key kind is a change `accepts` can only refuse (a value mapping cannot map keys).
 - **Methods:** `method()` (no arguments, no result), `method(args)`, `method(args, result)`, `method(undefined,
   result)`. A method without arguments omits them in the API (`ref.bump(ctx)`, implemented as `bump: async (ctx) =>
   …`); `null` is their internal and wire form (owner, 2026-10-22).
 - **Implementations** (owner, 2026-10-22): a state member is a JSON `Watchable` the factory returns (a document handle,
-  a derive, a reference member, `constant(...)`), never a getter; a method is a function `(args, ctx)` or `(ctx)`.
-  Activation checks what the factory returned (plugin code): exactly the variant's members, methods as functions,
-  state members as JSON watchables (a `NativeWatchable` or anything else fails the object `broken` naming the member,
-  Q14).
+  a derive, a reference member, `constant(...)`), never a getter; a method is a function `(args, ctx)` or `(ctx)`; an
+  event member is an `EventSource<T>` of the attempt's own (`self.events<T>()`) or a reference's `EventMember<T>`
+  (re-exposed). Activation checks what the factory returned (plugin code): exactly the variant's members, methods as
+  functions, state members as JSON watchables (a `NativeWatchable` or anything else fails the object `broken` naming
+  the member, Q14), event members as one of those Chord-made values (anything else, another attempt's source included,
+  fails it `broken` naming the member).
+- **Event members** (decision "Events: fire-and-forget members", owner, 2026-11-11): the third member kind, a JSON value
+  an object emits, delivered once to each reference that was bound to the object before the emit and still is when the
+  event is sent, never folded, never kept, never sent to a later holder, dropped for a holder that cannot keep up. Over
+  a link the provider's holder is the wire hold: references of one host sharing it (§7) get what arrives at their host
+  after each bound, also an event emitted before it that was still in transit (decision "References share one wire
+  hold"). A remote variant lists them under `events` (`variants: { player: { state, events: { paddle: Paddle }, methods } }`), a
+  local contract marks them in its flat members with `event(schema)`, as `keyed(schema)` marks a keyed member. Their
+  schemas describe JSON only (no `bytes()`) and may differ per variant (redaction). Types: `EventMember<T>` (the read
+  side, `on(listener, ctx): Promise<EventSubscription>`; references expose only it, never `emit`), `EventSource<T>`
+  (the owner's, adds `emit(value)`), `EventSubscription` (`stop()`); a listener gets `{ value, at }`. Delivery, wire and
+  versions: sections 11, 22 and 27.
 - **Reserved member names:** `then`, `release`, `state`, `retry` and `variant` are refused at declaration (a reference
   has them; `then` would make an awaited reference thenable).
 - **Compatibility (strict, like documents; R6):** a hold carries only the consumer's contract `version` and
@@ -608,8 +686,9 @@ host.serve(Notes, ({ session }, principal, self) =>
   `failed { waiting }` with `contract_mismatch` (slice 7a: not the consumer's fault; a publication that fits wakes it,
   §3). The fingerprint covers params, variants and members, not the host address. A consumer whose contract does not
   fit waits on its own request; the provider object and its other bindings are not affected.
-- **Variants:** a member name has the same kind (state or method) in every variant that has it, and a method the same
-  signature (arguments and result) in every variant; state schemas may differ per variant (redaction). Enforced at
+- **Variants:** a member name has the same kind (state, keyed, method or event) in every variant that has it and for the
+  whole history, and a method the same signature (arguments and result) in every variant; state and event schemas may
+  differ per variant (redaction). Enforced at
   the type level in `remote(...)` and at declaration at runtime. A remote factory returns one variant, `{ variant,
   members }`; `ref.variant` is the discriminant (section 7). Calls are checked against the binding's variant
   (`invalid/member` outside it).
@@ -639,7 +718,8 @@ host.serve(Notes, ({ session }, principal, self) =>
   pi-schema's message; `~` and `/` in keys escaped as `~0`, `~1`). Plugins throw `PluginError(code, message,
   details?)` for codes of their own; anything else crosses a link as the plugin code `internal` with its message, never
   a stack or a cause; plugin errors never use Chord's codes. An error rebuilt from the wire is not copied and only its
-  envelope is checked; a malformed envelope is a protocol error.
+  envelope is checked; a malformed envelope is a protocol error. Chord's root exports `invalid` and `forbidden`, which an
+  app's API re-exports, so a plugin throws a decided `ChordError` (decision "Tutorial gaps" (4)).
 - **Methods return data,** never objects; an object is handed out as its address and the receiver does `ctx.get`.
 - **No callbacks as arguments,** on either kind: behaviour goes through registries, multi-step work through jobs,
   input through flows, runtime services through core objects. Real schemas instead of `Type.Unsafe`.
@@ -787,6 +867,10 @@ host.serve(NoteStore, ({ session }, self) => {
 
 - Synchronous and declarative: no awaits, no side effects; async work happens in activation (opens), in calls, in
   routines and jobs.
+- **`self.events<T>()`** (decision "Events: fire-and-forget members") declares an event source of the attempt, in any
+  factory (local or remote, any params: events are never persisted); in staging it returns an inert handle. It belongs
+  to the attempt: an `emit` after the attempt's seal throws `released` (the seal fence). A restarting object's old
+  attempt emits until its seal (section 21).
 - Handles stay valid for their attempt's life (owner, 2026-10-26: documents and the line belong to the object; each
   attempt's handles carry its seal token and definition version); nothing is "read at use" or re-fetched.
 - On a reload the factory runs again: in staging against a recording `self` (declarations only), then for real; every
@@ -860,11 +944,17 @@ location are dropped.
   version), keeping no node of it. After a `failed` call, the next good value arrives as `[["r", value]]` even when
   unchanged; a watch opened while failed starts at the last value and gets the failure once. No source, mapping,
   document handle or pin of an instance outlives it through a reference: a detached reference keeps only plain last
-  values and its failure; releasing it drops them and its bindings; stopping a keyed watch drops its pin. Derives over a failed reference member compute on its last value (a contribution built on it stays); only the
+  values and its failure; releasing it drops them and its bindings; stopping a keyed watch drops its pin. A host-keyed member of a
+  reference (§5) takes addresses of its kind, checked and turned into canonical keys before its reads and pins. Derives over a failed reference member compute on its last value (a contribution built on it stays); only the
   member's own watches get the `failed` call, and `ref.state` shows the failure (owner, 2026-10-29). A re-exposed member is
   the re-exposing object's reference member, followed the same way. Over a link the same rule: the replica keeps its
   last values readable while its hold is failed. Nothing outlives its object instance and nothing is handed between
-  objects.
+  objects. A reference joining a shared remote object (below) does not acquire another reference's last value: "seen"
+  means a value this reference received while live. Joining an object that is not live (loading, failed), it has
+  seen no member; joining a live one, it has not seen the members failed or missing from the bound variant. Until a
+  value arrives for such a member after the join (read or not, while its watches exist or not), the member shows no
+  last value (a watch on it rejects with its error, as on a fresh failed snapshot; holding and vanishing keep none);
+  from then on its own last-value rules apply, across later failures, rebinds and a private retry.
 - **References across a reload** (slice 7b §6): a reference is never ended by a code change. Its object restarted: it
   follows the old instance while that serves its version, then the new instance (above; a hold over a link gets a fresh `bound`, §22). Its version no longer accepted, or a member of it refused (`contract_mismatch`): it leaves the object and waits
   unbound (`failed { waiting }`) with its last values; the object and its other holders stay. Its type removed: it
@@ -880,7 +970,29 @@ location are dropped.
   code).
 - **Members:** each state member of a reference is a watchable of the provider's member (a replica over a link);
   watches taken through a reference belong to it and end when it is released. Methods are functions (`ref.add(args,
-  ctx)`, `ref.bump(ctx)`).
+  ctx)`, `ref.bump(ctx)`). Event members are `EventMember<T>`s (decision "Events: fire-and-forget members"):
+  `ref.paddle.on(listener, ctx)` installs a subscription at once, bound or not, and resolves (it rejects `released` for
+  a released reference and the context's abort reason for an aborted one); it lives until `stop()`, the context's abort
+  or the reference's release. It receives events while the reference is bound to an instance whose variant has the
+  member and shows it live: none while `loading` or failed, none while bound to a variant without it (no failure call:
+  an event has no value to fail), and again when a later binding has it. When the reference moves to a new instance
+  (above) its subscriptions move with it, from that binding's counter value (section 11): nothing missed is replayed.
+  Events need no hydration (an event-only contract binds live). An event member is not a `Watchable`: no derive or
+  `on` source, no state member.
+- **Remote references of one host share a hold** (decision "References share one wire hold", owner, 2026-11-09 and
+  2026-11-12): an eligible reference to a remote object this host holds for the same type, version, fingerprint,
+  params, address (the one its placement computed) and caller (its principal's JSON as the wire carries it, and its
+  incarnation) joins that hold's remote object, with no message: live at once if it is live (values from its
+  replicas), else loading or failed as it is. Each keeps its own release, state, watches, subscriptions, parked calls
+  and calls; the hold ends with the last reference (no linger, D8: a reference after it holds anew, also in the same
+  turn). Releasing one of several cancels its own calls: its queued ones leave unsent, its sent ones are aborted
+  (newest first, so a relay drops a later call still waiting upstream before an earlier abort frees a slot for it); the
+  provider sees `aborted`, the caller `released`. `self.get` references (their holds carry the dependent's chain, Q5)
+  and relayed holds (R1) stay separate; a reference on a suspended route address holds on its own; one finding the
+  key's object failed `waiting` over a link (refused there: a new hold is a new request, and a relay's failed route
+  resolves again for it) holds anew; a broken remote object leaves the index for good (also after it recovers); a
+  private retry after `too_large/part` (below) is never indexed. Within one commit, the watch callbacks of several
+  references sharing a replica run in subscription order, not hold order. No hold survives its last reference.
 - **`ref.state`** is a `NativeWatchable` (slice 3b) of a tagged value; watches get each new state:
 
   ```ts
@@ -900,7 +1012,10 @@ location are dropped.
 - A failed reference stays alive: while held, Chord retries a `transient` failure per the backoff and wakes a
   `waiting` one at the event it waits for; `ref.retry()` tries at once (a Retry button; over a link the `retry
   { hold, hops }` message, which also re-runs a refused hold's start: the host address, binding; design audit 2026-10-27;
-  on a parked object it passes on to the failed dependencies, §6); success goes `loading`, then `live`. A provider
+  on a parked object it passes on to the failed dependencies, §6); success goes `loading`, then `live`. A retry of a
+  shared hold the provider refused restarts it for every reference sharing it; after `too_large/part` the retrying
+  reference alone moves to a new private remote object, placed anew, keeping its own watches, subscriptions, calls and
+  last values (the others stay failed until they retry). A provider
   tells a pending hold's consumer each failure (`failed`, with the rest of its backoff window for a transient one),
   each new cause of an object parked on a failed dependency, and the next attempt (`loading`).
 - **Parked calls** (slice 3b): calls made while the reference is loading are queued in order, each waiting at most the
@@ -909,7 +1024,9 @@ location are dropped.
   Otherwise a call ends only through its caller's signal; there is no per-call deadline.
 - Calls already sent when a link drops fail `unavailable` and are not resent; calls running on an instance that ends
   fail and are not resent. **Releasing a reference rejects the calls made through it** (`released`), locally and over
-  links (slice 3a). A consumer receiving `gone(h)` rejects its own pending calls on `h` (Q1).
+  links (slice 3a); releasing one of several references sharing a hold aborts its sent calls (`abort`, the provider
+  sees `aborted`) and drops its queued ones, the last release sends `release` as before. A consumer receiving `gone(h)`
+  rejects its own pending calls on `h` (Q1).
 - References survive link drops: one owner of a host's remote references holds them again on every new link of their
   path; a re-hold may bind another variant (slice 3b).
 - **Consumers** handle a failed call as they handle a disconnect (error shown, user retries); Chat's own submission
@@ -1020,6 +1137,18 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   nothing); `for await (const key of handle.keys(ctx))` pages keys (both take a context, owner, 2026-10-26) (indexed per owner and definition, also in memory). No
   live key list: a collection shown live is a singleton (an object holding a list or map); large collections are
   methods returning pages.
+- **Host-keyed documents** (decision "Documents and table rows can belong to a host", 2026-11-09; spec
+  `host-keyed/spec.md`): `keyed: Session` keys documents by addresses of a host kind: `KeyedHandle<T, Address<K>>`,
+  `tx.draft(meta, Session({ id }))`; `keys()` yields addresses. Only addresses of the kind are taken (a string, the
+  empty one included, is `invalid/args`). **The canonical key** is an address's key under the `str()` text rules (a
+  lone surrogate replaced, NUL refused); for an address a plugin hands in (a key, a cell, a member key) it is computed
+  from the params, never taken from its `.key`, while the host data calls take `address.key`. It is the document's
+  key, the record's `host`, a `host(...)` cell and a host data selection alike. **The discriminator:** a persisted host-keyed document's record has `host = key`, every other record
+  `host` NULL; a find or load whose record does not fit the definition's keys fails the object `broken` (no implicit
+  conversion; converting is an explicit store migration). Pins (`at(address)`), watches and retirements work by the
+  canonical key as for string keys; migration on access is unchanged. **Store maintenance** (a host data import or
+  delete, §10) is the one change of an object's documents outside its transactions: it holds the object's line,
+  reads what the object holds of the address inside its commit step and adopts it in one batch (§10).
 - **Values are immutable by convention** (Chord Delta's rule, as in Durable): `handle.value` and published values
   are shared, never mutated by their readers, and never copied or frozen; a draft belongs only to its transaction.
 
@@ -1078,6 +1207,9 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   reference what is committed (a reference to a later commit dangles on every replica that stops in between).
 - **Durable's rule:** inside the callback only `await tx.*`: no other objects, models, processes or network, no second
   `self.tx`, no reads past `tx` (otherwise a hang, not an error). Fetch first; decide and write inside.
+- **An emit is no transaction work** (decision "Events: fire-and-forget members"): `source.emit` neither waits for the
+  object's line nor joins a commit; an emit inside a `self.tx` callback is outside the rule above (and delivered even if
+  the transaction fails), unchecked. The pattern: `await self.tx(...); source.emit(...)`.
 - A transaction covers only its own object's documents and tables: one line, no transactions across owners (facet
   documents were removed, owner, 2026-10-26; shared plugin state is a `local` store object's, reached by methods).
 - **Shorthands:** `handle.change(fn, ctx)` (keyed: `handle.change(key, fn, ctx)`) (one document, loaded before the synchronous `fn`),
@@ -1109,9 +1241,11 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
 
 ### Lifetime, persistence
 
-- **No tags (owner, 2026-10-21):** deleting a session deletes its store and directory; instance data on the server that
-  refers to a session is a table with a `session` column, cleaned up by its owner (`deleteWhere`, reconciling from the
-  catalog).
+- **No tags (owner, 2026-10-21):** deleting a session deletes its store and directory. Instance data on the server
+  that refers to a session and must travel with it (export, import, delete) is host-keyed (decision "Documents and
+  table rows can belong to a host", 2026-11-09): documents keyed by `Session` or rows with a `host(Session)` column;
+  the store finds them by address (§10). Data that only refers to a session is cleaned up by its owner
+  (`deleteWhere`, reconciling from the catalog).
 - **In-memory documents are instance state (P2, owner, 2026-10-21):** attached to the live object, with no storage, no
   address, no seq and never in the outbox; their commit is prepare and adopt (inside the store's commit step when the
   transaction also writes persisted data).
@@ -1245,6 +1379,18 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   each `json(...)` column's) in the outbox and in archives, a `table` write its state, a `latest` document its current
   value; the applier never infers a version. The encoding is pluggable; plain JSONL ships first. Sync is not export:
   it ships outbox batches as commits happen.
+- **Group commit (S18, owner, 2026-11-04):** the commits queued behind a running commit step form one group, written in
+  one backend transaction at the queue's next turn: each keeps its own step, seq and outbox commit, and memory follows
+  commit by commit after `COMMIT`, in queue order. A refusal in a group rolls it back whole and its commits run again
+  one by one, so only the refusing commit is refused (`store/book.md`).
+- **`store.onCommitted(listener, onError)`** (built with p2's backup coordinator, 2026-11-11; no decision): calls
+  `listener` with the new `lastSeq` once commits are durable and adopted (a commit, a group, a series, an applied
+  batch), in a microtask of its own, never inside a commit, once for however many commits it covers; a listener that
+  throws is removed and its error handed to `onError`, never to the commit. Returns its removal.
+- **Session sync** (`@earendil-works/chord/sync`, experimental): uploads of a store's outbox batches to a remote, pulls
+  applied with `applyBatch` (one transaction per chunk), restores from an archive. A batch is applied with the host
+  stopped (decision "Sync applies batches with the host stopped", 2026-11-02): `applyBatch` refuses (`invalid/args`)
+  while an owner holds a claim on the store.
 - **`json(schema, { version, migrate? })` columns (owner, 2026-10-26):** schema and version required, `migrate`
   optional and pure, on access (W11), its result checked once (R8); without it (or failing) the read is refused and
   the owner fails `broken`; each column's version and schema fingerprint are recorded in the table definition and
@@ -1271,6 +1417,38 @@ host.serve(DraftStore, (_, self) => {               // local, empty params: may 
   the counted conditional `UPDATE`, the live-address index) fails live (`object_failed`, `broken`); an `int` result out
   of range (`CHECK`) fails only that transaction (`invalid/args`). Durable's Session fails on any commit error
   (`GuardedStorage`), as today.
+
+### Data belonging to a host (decision "Documents and table rows can belong to a host", 2026-11-09)
+
+Spec `host-keyed/spec.md` §2 to §5.
+
+- **Schema 3:** `chord_documents.host` (the canonical address key of a host-keyed document's host, NULL otherwise) with
+  a partial index. Archives stay `format: 1`; a record carries `host`, a column `host`, a host data archive's manifest
+  `host`.
+- **`host(Kind)` columns:** a non-`opt` `str` column holding canonical address keys (`{ type: "str", host: "<kind>" }`
+  in the catalog and the fingerprint), at most one per table, read as addresses. The definition adds the index `host`
+  over it unless the key starts with it; `evolveTable` cannot add a host column (no default). Queries compare it with `eq`, `ne`, `inArray` only.
+- **Filtered archives:** `exportHostData(store, address)` writes the address's records and rows in the archive
+  format (the tables with a host column of its kind, only its rows; its records), holding the commit queue.
+- **Import** (the host's `importHostData(parts, ctx, { address?, existing? })`, one commit): the archive is
+  checked as untrusted (a manifest `host`, every row and record of it, Chord records only; its table metadata is not
+  compared: a fingerprint is no security boundary);
+  existing data of the target is refused or, with `existing: "replace"`, retired and deleted in the same commit; a
+  table not recorded here is created from the archive; every row must hold the target in the recorded table's own host
+  column; an older or `migrating` archive table's rows migrate in
+  memory through the owner's `evolveTable` history (edits, `rows` and `update` steps, `$v` and `json(...)` cell
+  versions exact; the owner activated for it); a newer one is refused. Records get fresh ids and the commit's seq,
+  their values as bases at their versions (they migrate on access); rows never replace another address's row. A copy
+  under another address of the kind rewrites host cells and keys only. The commit's writes are ordinary outbox
+  writes (`document.create`, `put`, `document.retire`, `deleteWhere`).
+- **Delete** (`deleteHostData(address, ctx)`): one commit retiring the address's records and deleting its rows.
+- **Live claims:** import and delete are the host's only (the store-level functions are internal). A host data gate
+  serializes them and keeps activations' load phases out while one is exclusive; the operation holds the lines of
+  every live owner (of host-keyed documents of the kind, of tables with a host column of it, of the archive's and
+  stored records), reads what they hold of the address inside its commit step (documents through the step, live
+  queries re-run) and adopts it all in one `host.batch.commit` after `COMMIT`, as an ordinary commit (W1). The commit
+  is admitted only while the caller's context is live; an object that cannot read an imported
+  document fails alone.
 
 ---
 
@@ -1299,7 +1477,9 @@ commits are the exact invalidation: a commit not writing the table runs nothing)
 (params decide it); **a limit is required** (`invalid/args` at declaration; the store's query language keeps the limit
 an argument of the runner, as `page` has it). A run that fails (a row the code cannot read) is a failed member, as a
 throwing derive (one failure call, `query_failed` once per episode, `[["r", rows]]` at the next good run); the object
-stays live. It is no native: a restart's successor runs its live queries again at its activation (section 21). Cost: one query per
+stays live. It is no native: a restart's successor runs its live queries again at its activation (section 21). A host
+data import or delete (§10) is the one other writer of an object's tables: it re-runs the object's live queries over
+tables with a host column of its kind inside its commit step and adopts them in its batch. Cost: one query per
 touching commit, bounded by the limit (100 rows: about 60 µs unwatched, 80 µs watched, `benchmarks.md`); **there may
 be dragons** for tables written hundreds of times a second. Incremental maintenance of the result (row-level changes
 kept in memory, a re-run only when a removal empties the window or a bulk write hides which rows changed) is left for
@@ -1364,9 +1544,9 @@ type NativeWatchCall<T> = { kind: "value"; value: T } | { kind: "failed"; error:
   (no ops) for a Durable one, which has none while absent. Watching an absent address gives `undefined`. On the wire a
   `state` entry lists retired members like failed ones. A per-key source in a factory, `handle.at(key)`, is a singleton per key: loaded at activation, `initial()` while absent, usable as a state member, derive source and `on` source (owner, 2026-10-26). A
   stopped watch releases every reference it held (W3).
-- **Only `Watchable<Json>` can be a contract state member or go on the wire**, by type and by a kind check when the
-  object is served (Q14); a `NativeWatchable` never can, even holding JSON. Mutating a native value in place notifies
-  nobody.
+- **Only a `Watchable<Json>` can be a contract state member**, by type and by a kind check when the object is served
+  (Q14); a `NativeWatchable` never can, even holding JSON. Mutating a native value in place notifies nobody. (Event
+  members go on the wire too: below.)
 - **Publication (W1):** the commit step writes, adopts (pointer swaps, Durable's touched views dispatched by id) and
   marks (dirty derives; ops appended by reference to each touched hold's batch and each watch's queue). Right after
   the step, synchronously, the owner's flush recomputes the dirty derives someone holds or watches (dependency order),
@@ -1381,6 +1561,44 @@ type NativeWatchCall<T> = { kind: "value"; value: T } | { kind: "failed"; error:
   the object (first call with the current value, then every commit; Chord awaits a running call on reload); clients
   get ordered ops over the link, folded by the provider's pending queue when they fall behind (section 3); a re-hold
   gets a fresh snapshot.
+
+### Events (decision "Events: fire-and-forget members", owner, 2026-11-11)
+
+Folding and the window are right for state (a slow page gets the newest value, never a backlog) and wrong for motion:
+a paddle position is a sample in time, worthless a moment later, and interpolation needs the samples around the time
+it draws. Events are the third member kind for that (section 5): never folded, never kept. **One rule: events are
+collected until the event flush, a microtask the first emit queues; the flush sends them after every `state` message
+published before it runs.**
+
+- **The list and the counter:** an emit increments the host's emit counter and appends `{ source, value, at, n }` (`n`
+  the counter's new value, `at` the emitting host's `Date.now()`) to the host's event list; the first entry queues the
+  flush. Commits keep flushing synchronously at their end (W1), so state published before the flush is sent first:
+  `emit(A); commit; emit(B)` in one synchronous run is the commit's `state` message, then one `event` message with A
+  and B. A commit whose publication waits for a later microtask (`emit(A); queueMicrotask(commit)`) may follow A.
+- **Who gets an event:** each binding records the counter's value when it is made: a hold over a link when its `bound`
+  is sent (one held back by the state window gets nothing before it), a same-host reference when it binds to the
+  instance, a re-exposing reference likewise; a reference joining a shared remote object (§7) when it binds (it gets
+  the events that arrive at its host after it bound, also one emitted before that was in transit; the provider's
+  eligibility is per wire hold). Counter values are each host's own: an event arriving over a link takes
+  the receiving host's next value as it arrives, and that host's bindings are judged by it. A binding gets only entries
+  with a higher `n`, and only while it stays that binding: at the flush each entry goes to the bindings of its
+  source's object instance that pass this test, and through re-exposure to the bindings of the re-exposing objects by
+  the same test. A binding that ended before the flush (released, `loading`, failed, ended, or unbound and bound
+  again, even to the same instance) gets nothing; one made after the emit never inherits it. A binding whose object no
+  longer shows it live stops getting events at once, everywhere: a hold over a link untaps its event members then,
+  while its state still follows the instance's admitted commits until they published (section 7); an old attempt still
+  shown live during a reload's drain keeps delivering until its holds leave it.
+- **Sends, then listeners:** per link and origin with entries, one `event` message (section 22), unless that origin's
+  event window is full (section 3: dropped). Then the same-host listeners, outside the publication's reentrancy fence
+  (as watch callbacks): in entry order, then subscription order. A listener may release, subscribe, start transactions
+  and emit (into the next flush, a new list); one stopped, aborted or released before its call is skipped; one that
+  throws is reported (`listener_error`) and its subscription ends, the others are called. A consumer applies a
+  received `event` message the same way.
+- **Re-exposure:** an object implementing its event member with a reference's (`paddle: store.paddle`) forwards each
+  event unchanged, value and `at`; an object that transforms events emits from a source of its own, which stamps anew
+  (a sample time the app needs belongs in the value). Per-principal filtering is a routine re-emitting (section 14).
+- **No order with later state:** a `state` message held back by a full state window is overtaken by later events. A
+  fact that must follow a state change on every holder goes into state.
 
 ---
 
@@ -1511,6 +1729,10 @@ self.onLive(async (ctx) => {                                    // set up, wait 
 - **Helpers:** `sleep(ms, ctx)` (rejects when `ctx` is aborted, leaves no timer or listener) and `untilAborted(ctx)`.
   Routines and handlers wait only through calls that take `ctx`; otherwise Chord cannot stop them, and the drain
   reports them stuck.
+- **Re-emitting events** (decision "Events: fire-and-forget members"): an event member is no `on` source; a
+  per-principal view filters a store's events with an `onLive` that subscribes and re-emits from a source of its own:
+  `self.onLive(async (ctx) => { const s = await store.paddle.on((e) => mine.emit(redact(e.value)), ctx); try { await
+  untilAborted(ctx); } finally { s.stop(); } })`.
 - **Errors:** `onError` gets `routine_failed { object, routine, error }`, `routine` a `Position` (`{ kind: "on" |
   "onLive", position }`; natives use the same type); never uncaught.
 - **Keep-alive:** routines do not count in `host.activity` (an `onLive` runs forever).
@@ -1768,7 +1990,9 @@ const router = self.registry(Http);           // a declared dependency; read rou
   the latter two through the internal flush: on every change it replaces that entry (a new immutable table) and runs
   `compose` again, in the owner's flush, never inside another owner's commit step. The composed value is itself a
   `NativeWatchable`; use sites watch it or read its current value. For in-process values that change,
-  `self.writable(initial)` is a `NativeWatchable` with `set` (identity compared, never ops, never a state member):
+  `self.writable(initial)` is a `NativeWatchable` with `set` (identity compared, never ops, never a state member). An
+  event member is no followed contribution (it is no watchable): contributed, it is a plain value like any other
+  in-process value:
 
   ```ts
   const ext = self.writable(mcpExtension([]));                  // e.g. MCP: tools known only at runtime
@@ -1836,13 +2060,16 @@ const viewers = self.derive([host.references(Notes)], ([refs]) => refs.length);
 `{ params, principal?, incarnation }[]` (named `origin` until 2026-10-27). It is one rule (owner, 2026-10-24): the incarnation of the host that made
 the reference as its caller sees it, so two tabs are two origins, and a guest's `ctx.get` shows the guest's tab. An
 entry is added when a reference binds and removed when it ends, in that batch; a departure discovered while a batch
-is sending lands in the next batch (so one commit stays one message per link). The host keeps a type's list from its
+is sending lands in the next batch (so one commit stays one message per link). A hold shared by references of one host
+(§7) is one entry, until that hold ends: a non-final release there removes nothing here; local, `self.get`,
+private-retry, other-key and separate downstream holds are not deduplicated. The host keeps a type's list from its
 first `host.references(Type)` on (one small object per asked type; entries come and go with references). **A link drop is a departure**
 (accurate and simple); smoothing (a phone switching networks) is the UI's job, e.g. a debounced viewer count. Counts
 per person or origin are derived by the app from the principals and origins. There is no consumer-side linger
 (a closed tab closes its link); provider-side `linger` keeps a just-closed object warm and keeps the worker alive
 (section 3). Replaces the presence, viewer and login-abandon leases. "Leaving" is never derived from an unmount
-(section 21).
+(section 21). Event subscriptions add no presence entries, counts or principals (nor to `host.activity`, nor
+revocation): a reference is listed once, subscribed or not.
 
 ---
 
@@ -2022,6 +2249,15 @@ type ReloadReport = {
   them until its successor is live, which replaces them in one batch, or drops them when the successor fails or parks
   (F-c). **Routines** stop at the restart; their calls drain with the old attempt's; the successor's start when it
   goes live.
+- **Events** (decision "Events: fire-and-forget members"): a restarting object's old attempt emits until its seal, and
+  the holds bound to it get those events; its successor's events go to the holds that bound to the successor (from
+  their binding's counter value: nothing is replayed). A re-exposing object follows its source's restart without
+  restarting: its references move.
+- **Against a running host data operation** (decision "Documents and table rows can belong to a host"; spec
+  `host-keyed/spec.md` §5): a restarted object's successor (as every activation) runs its load phase (hydration,
+  persisted loads, table preparation, live query loads) through the host data gate: while an import or delete is
+  exclusive it waits, so it loads what the operation committed; an operation waits for the load phases under way. An
+  owner a running import activated for its table history passes the gate before the import becomes exclusive.
 - **Reload cycles** (rule 6): a wait of old work on an object whose activation waits, through its parked
   dependencies or the gates its opener waits at, on the old attempt that very work runs on fails at once with
   `unavailable/reload_cycle`, naming the chain (`app.f(fresh) → app.p`: old work creating an object whose new code
@@ -2041,7 +2277,9 @@ type ReloadReport = {
   the wire, untouched by reloads and gone with the page (a page reload, a terminal's new base bundle). Rejected: React
   Fast Refresh (a Babel or SWC transform in every web build, fragile when hooks change).
 - **No factory trial, no migrate dry run, no consumer contract check during staging:** staging records declarations;
-  incompatible consumers wait at bind (`failed { waiting }`, `contract_mismatch`). The one exception is the closure
+  incompatible consumers wait at bind (`failed { waiting }`, `contract_mismatch`); a reference joining a held remote
+  object (§7) is not checked against the provider's new contract while the old attempt still serves its hold. The
+  one exception is the closure
   rule above: when a plugin of the reload failed, a changed plugin's recorded requests are checked as a bind would
   check them, to keep it old.
 - **Start barrier** (host start and first load; dependency model §6, decision (a), slice 7a): `load` runs the facets'
@@ -2097,7 +2335,7 @@ worker (the reload suite), not only by unit tests. "The page" is any client over
 | code holding natives (a restart) | as pure code; the old code's natives close (`reload`) at the seal, the new code's open before the fresh snapshot | as pure code | as pure code; natives reopened |
 | a contract change the new code still `accepts` | the old page keeps working through the mapping | answered through the mapping | unchanged |
 | a contract change not accepted, or a type removed | the reference waits with its last values (`failed { waiting }`) until the page's code updates or the type returns | calls fail at once with the cause (`contract_mismatch`, `unavailable` not served; §7) | unchanged |
-| a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount; a page fetches the plugin's new stylesheet inactive before the reload (beside its old one, at most 10 s), applies it with the new code and retires the old one a frame after the reload (a plugin whose new script failed keeps its old stylesheet with its old code, the new one never applied); limitation: UI an object contributes stays until its successor is live and can show unstyled during that restart | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
+| a web or terminal plugin | the other plugins untouched, scroll kept; the reloaded plugin's components remount; a page fetches the plugin's new stylesheet inactive before the reload (beside its old one, at most 10 s), applies it with the new code and retires the old one a frame after the reload (a plugin whose new script failed keeps its old stylesheet with its old code, the new one never applied); a remounted reference is live at once if it joins an already live eligible remote object (§7), otherwise it sees that object's loading or failure, or makes a fresh hold; limitation: UI an object contributes stays until its successor is live and can show unstyled during that restart | the reloaded plugin's calls as above | component state starts over; `usePageState`/`scope.pageState` survive |
 | base code (the app's client and worker entries, Chord, React) | applied by restarting the server (the kit builds the base bundles and each worker kind's worker base right after the server listens; no reload applies them, and a worker forked meanwhile runs the server's boot code); the page reconnects to a new base and reloads (the terminal restarts its sandbox): the only case losing what is on screen | calls in flight end with the link | page state lost; in-memory server and worker state lost; stores unchanged |
 
 Order: the server, then every running worker by the same rules, then the clients' scripts.
@@ -2198,14 +2436,14 @@ validation, no clone of snapshots or ops.
 
   | Kind | Direction | Fields |
   | --- | --- | --- |
-  | `hello` | both, first | `protocol`, `incarnation`, `calls` (the call window N) |
+  | `hello` | both, first | `protocol`, `incarnation`, `calls?` (the call window N; absent: none, a trusted link's; the binary codec writes 0) |
   | `hold` | to provider | `origin?`, `hold`, `type`, `version`, `fingerprint`, `params` (part), `address`, `principal?`, `incarnation?`, `chain?` (activation chain, Q5), `limit?` (decoded size limit, 4b) |
   | `revoke` | parent to child (route link) | the revocation value (4b) |
   | `release` | to provider | `origin?`, `hold` |
   | `retry` | to provider | `origin?`, `hold`, `hops` (the retry's hop budget, 1-16: 16 from the first host, one less for each host it passes on from, none sent at 0; audit A5); relays forward it unchanged |
   | `call` | to provider | `origin?`, `call`, `hold`, `method` (index), `args?` (part; absent: no arguments), `segments?`, `old?` (`true`: old work of a reload, §21) |
   | `abort` | to provider | `origin?`, `call` (named `cancel` until 2026-10-27) |
-  | `ack` | to provider | `origin?`; one per applied `bound`/`state` message |
+  | `ack` | to provider | `origin?`, `events?`: without `events` one per applied `bound`/`state` message; with `events` (at least 1) the `event` messages of the origin consumed since the last such ack, never combined with a state ack |
   | `closed` | relay to provider | `origin`: the downstream origin ended |
   | `bound` | to consumer | `origin?`, `holds: [{ hold, variant, members: [{ member, value }], failed }]`; one batch |
   | `state` | to consumer | `origin?`, `holds: [{ hold, members: [{ member, ops }], failed, retired }]`; one batch (`retired`: members retired since the last message, slice 6a) |
@@ -2215,6 +2453,7 @@ validation, no clone of snapshots or ops.
   | `error` | to consumer | `origin?`, `call`, `error` (a ChordError's JSON or a plugin's code, message, details) |
   | `gone` | to consumer | `origin?`, `hold`, `error`: the held object ended (revocation 4b; a reload never ends a hold, it unbinds it with `failed`, slice 7b; relays never make one) |
   | `ping`, `pong` | both | the heartbeat |
+  | `event` | to consumer | `origin?`, `events: [{ hold, member, at, value }]` (decision "Events: fire-and-forget members"): `member` an index into the bound variant's event members (sorted, as state members and methods), `at` an integer, `value` a part; one per event flush per link and origin, possibly empty (a relay's filtered one) |
 
   A `bound` on a hold that is bound already replaces its replicas in one batch, another variant allowed (re-holds,
   slice 7b's restarted objects, another variant included).
@@ -2222,7 +2461,12 @@ validation, no clone of snapshots or ops.
   following origin varint, varints, raw incarnations and fingerprints, length-prefixed strings and parts; about 23 B
   for a streamed token) and `textCodec` (Delta-style JSON tuples without field names, a message with an origin wrapped
   as `["@", origin, tuple]`; for debugging; `describeMessage` prints any message so). Measured: a 2,000-token reply
-  about 46 KiB instead of 196 KiB. No CBOR (revisit only if benchmarks show encoding as a bottleneck).
+  about 46 KiB instead of 196 KiB. No CBOR (revisit only if benchmarks show encoding as a bottleneck). Events: the
+  binary codec adds the kind `event` (a count, then per entry hold, member and `at` as varints and the value as a part:
+  67 B for one paddle sample) and flags an event `ack` in the kind byte (`0x20`, its count following, so a state ack
+  stays one byte); the text codec writes `["E", [[hold, member, at, value]…]]` (wrapped with its origin as any message)
+  and `["a", events]`. Every bound hold receives all its variant's events (no subscription message); a consumer
+  without listeners drops them on arrival, unparsed.
 - **Parts are opaque** (slice 4a): `params`, `args`, `value`, snapshot values and ops are a `Part` (JSON text at the
   origin, its UTF-8 bytes once a binary codec received it). A part is parsed only where it is owned, right when its
   message is handled (the provider parses params and arguments, the consumer results, snapshots and ops), so a relay
@@ -2248,12 +2492,21 @@ validation, no clone of snapshots or ops.
 - **Sending:** one `state` message per commit per link and origin while the window has a slot; otherwise the ops wait
   in the members' pending queues and leave as one message when an `ack` frees a slot, or before a call's `result` or
   `error` of that origin, past the window (section 3, "a call's answer follows its state"; a relay sends its own before
-  each answer it forwards). No message kind or field changes.
+  each answer it forwards). No message kind or field changes. Events go at the event flush (section 11), within the
+  origin's event window (section 3); a consumer consumes an `event` message once its parts are inflated and parsed and
+  its entries delivered or deliberately dropped (no listener, an unknown or released hold, a part over the limit) and
+  acknowledges it then (`ack { events }`); an index outside the bound version is a protocol error. A value nothing
+  listens to (an unknown hold, one not live, a member without subscriptions) is dropped unopened: neither inflated
+  (the consumer resolves the index and the interest before it schedules an asynchronous inflate) nor parsed.
 - **Relays** read and rewrite only envelopes (section 3, "Relays").
-- **Size limits per part (R2, Q2; slice 4b):** limits apply to each part (wire and decoded size), configurable per
+- **Size limits per part (R2, Q2; slice 4b):** limits apply to each part (an event's value too: an oversized one is
+  dropped where it is parsed and counted, its hold stays bound), configurable per
   link, checked from the part's length before it is parsed or inflated; the decoded limit is enforced in the one
   decode function. An oversized part fails only its own hold or call (`too_large/part`); the other parts of the message
-  apply; a snapshot over the limit fails its hold with no automatic re-hold. The decoded limit travels with relayed
+  apply; a snapshot over the limit fails its hold with no automatic re-hold. A reference joining a shared remote object
+  (§7) receives no snapshot and checks none (a value grown past the limit by small deltas does not fail it); an
+  oversized snapshot or state part fails the shared object and all its references; only a reference that retries moves
+  to a new private hold. No message, codec or protocol-version change; the per-hold encoder and two-tab rules stay. The decoded limit travels with relayed
   work: the relay checks the admitting link's wire limit itself and stamps its decoded limit on the upstream `hold`
   (honoured on the parent link only, never taken from a client; calls inherit their hold's), and the host that
   inflates enforces the smaller of its own and the stamped one while inflating, after the part's owner and id are
@@ -2268,7 +2521,8 @@ validation, no clone of snapshots or ops.
   Defaults for client WebSockets: 16 MiB on the wire and 64 MiB decoded per part; none on IPC.
 - **Compression at the origin** (owner, 2026-10-19; slice 4b): a JSON part above a threshold (e.g. 16 KiB) is
   compressed once by a host with a synchronous compressor when it encodes it (`createHost({ compression })`, Node's
-  zlib adapter in a Node-only subpath), whatever the link (IPC included), only if it shrinks; hold params are never
+  zlib adapter in a Node-only subpath), whatever the link (IPC included), only if it shrinks (an event's value too,
+  encoded once per representation for every hold and link); hold params are never
   compressed; byte segments stay raw; the codec is in the part's envelope (the text codec tags every part, so no JSON
   value is reserved); relays forward it compressed; the end that owns it inflates it. Option (b) (owner, 2026-10-24):
   hosts without a compressor (browsers) send uncompressed and inflate asynchronously (`DecompressionStream`), holding
@@ -2341,7 +2595,7 @@ The core is one Web-standard handler built from the registry `Http` (decision "T
 ```ts
 const http = createHttp(server, {                    // settings are arguments, fixed for the component's life
 	listen: { host: "127.0.0.1", port: 8788 },        // Chord's own Node listener; none: the app mounts `fetch`
-	links: { path: "/chord", options: (request, principal) => ({ limits, maxPayload }) },
+	links: { path: "/chord", options: (request, principal) => ({ limits, maxPayload }), opened: (request, principal) => onClosed },
 	closeTimeout: 30_000,
 	onError,                                          // HttpError
 }, ctx);
@@ -2418,7 +2672,9 @@ route's checks, never instead of them.
 - **Sockets** (D6): `sockets: { "/terminal/:id": (socket, request, ctx) => … }`, a `ws` WebSocket after admission
   and the authenticators (no principal: 403 before plugin code), `maxPayload` per contribution (1 MiB), pinged after
   15 s of silence and terminated 15 s later. **Links:** `links.path` upgrades to `host.accept(webSocketLink(socket), {
-  principal, limits })`; a client that stops reading is cut off past 4 MiB waiting. **What is removed is closed at
+  principal, limits })`; a client that stops reading is cut off past 4 MiB waiting; `links.opened(request, principal)`,
+  when given, hears each link opened and may return what to call when it closes (the kit counts an ephemeral sign-in's
+  links with it; a throw is reported as the hook `links.opened`). **What is removed is closed at
   once** (decisions Q6, "allowed hosts only through contributions"): a link or socket whose host, relay or socket
   handler leaves the router is terminated and its scope sealed; an upgrade is checked again against the current router
   after its authenticators answered.
@@ -2457,9 +2713,11 @@ draining old holder without polling).
   literal specifier: the entry and the chunks it imports statically load at each fork, a lazily imported module and the
   packages it imports only when the worker first imports it (an app's lazily loaded providers stay lazy; a module still
   runs after its imports, but modules that do not import each other may run in another order than unbundled); a
-  variable-specifier import resolves at run time against its module's source file, outside the snapshot. ES modules with
-  inline source maps, forked with `--enable-source-maps` before the app's `execArgv` (stack traces name the source
-  files); `execArgv` and `env` apply to every fork as before (modules an `--import` names load from disk at each fork).
+  variable-specifier import resolves at run time against its module's source file, outside the snapshot. ES modules,
+  each with its source map beside it (`<name>.mjs.map`, linked), forked without `--enable-source-maps`: Node would
+  parse the whole map at the first stack made text (Chord makes a kept error's stack text at once), about 1M positions
+  and 50 MiB of a p2 session worker's heap for its life; stack traces name the bundle's files and functions, and an app
+  that wants them mapped passes the flag in `execArgv`, at that cost. `execArgv` and `env` apply to every fork as before (modules an `--import` names load from disk at each fork).
   The files live in one private temporary directory (0700, written again into a new one when a cleaner removed one of
   them), removed at `close`. The worker's side alone is `@earendil-works/chord/workers/child` (`workerMain`,
   `processLock`): a worker entry importing it loads no esbuild. Plugins are unaffected: workers evaluate the server's
@@ -2503,12 +2761,18 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   User data lives in objects keyed by the user's id. Optional kit plugins: users (accounts with an app-supplied profile
   schema), authenticators (device pairing, invite links, an ephemeral pick-a-name login).
 - **Authentication:** no owner by loopback alone: the start script prints a link with a one-time token that sets a
-  signed cookie of the owner's session; the owner link, the owner token file and device pairing sign in as the app's
+  signed cookie of the owner's sign-in; the owner link, the owner token file and device pairing sign in as the app's
   owner principal, and the owner-only routes (pairing's approval, invites) recognize it by canonical JSON, each
   principal's key computed once per principal object; a change of the owner between starts replaces the owner token file
-  and revokes its old session; deny by default (the HTTP component refuses requests without a principal unless the route
-  or socket is public); a session helper issues and revokes sessions; command-line clients send a token in a header (an
-  owner token file readable only by the app's OS user; a device pairing flow from other machines).
+  and revokes its old sign-in; deny by default (the HTTP component refuses requests without a principal unless the route
+  or socket is public); `SignIns` issues and revokes sign-ins (one browser or device signed in as a principal: its
+  cookie or token, its expiry, its revocation; decision "Sign-ins, not sessions"); command-line clients send a token in a header (an
+  owner token file readable only by the app's OS user; a device pairing flow from other machines). A token is
+  `<id>.<secret>`, only the secret's hash kept; a browser carries it in the signed cookie `chord-sign-in`. Browser and
+  device sign-ins persist in the server's store and end unused after 400 days (a browser's cookie is renewed once it is
+  a day old); ephemeral ones (the pick-a-name login) live in memory only, at most `limits.ephemeralSignIns` (1,000;
+  past it the oldest ends), each ending with its client's connection (its last link closed and none opened for a
+  minute) and with the server's run.
 - **Storage:** one store for the server, a directory per worker under its kind and address with its store; plugins
   never use data-directory paths. `Files`, one per host (decision "Files v2"), is the default file storage: its
   bytes as immutable blobs in the host's `files/`, its index in tables of the host's store; every file in a space at
@@ -2520,8 +2784,26 @@ entry. Opinionated and small: an app is its API, its built-in plugins and a star
   by one object, under the worker's directory. Export and import the data a host created (`exportData`, `importData`): the store's archive plus its
   files; export stops nothing (a running worker packs its own store; without one the server reads it under the
   worker's lock), import refuses an address that has data (decision "App kit naming and export").
+- **Data belonging to the address** (decision "Documents and table rows can belong to a host"; spec
+  `host-keyed/spec.md` §6): the kit's archive format 2 adds `server.archive`, the server's records and rows belonging
+  to the address (`exportHostData`, JSONL). The server's part and the worker's part are taken at two points in time
+  (no transaction spans two stores). `importData(archive, address, ctx, { existing })` refuses an address with data
+  (a directory, or server records or rows), replaces it with `existing: "replace"`, and copies under another address
+  of the kind (host cells and keys rewritten); `deleteData(address, ctx)` (refused while the worker runs) removes the
+  directory and the server's data. **Ordering, no durability promise** (owner, after the delta review: no journal):
+  under the worker's lock an import unpacks whole into staging (nothing changed yet), moves an existing directory
+  aside (replace), renames staging into place, and commits on the server last, the one commit; a failure before it, or
+  a definite refusal, undoes the renames and rejects; an unknown outcome (`storage_failed`) undoes nothing and is
+  reported in the rejection; the aside directory goes only after the commit. A delete commits on the server first,
+  then removes the directory. Crash windows: an import between placing the directory and the server's commit (fix:
+  import again with `existing: "replace"`); a delete after the server's commit (an orphan directory nobody refers to,
+  removed by a repeated `deleteData`); leftover staging directories.
 - **Plugins:** the app's root (required) and the user's root in the data directory; installs from git or npm; one
-  "apply changes" call builds and rolls out to the server, then every running worker, exposed by the app as it likes.
+  "apply changes" call builds and rolls out to the server, then every running worker. The kit serves it to the owner
+  as a remote object on the server, `AppChanges` (`chord.app.changes`, params `{}`; decision "The kit serves the reload
+  control", owner, 2026-11-11; not built yet): state `marks` (the plugins component's state: `dirty`, `install`, `set`,
+  `base`) and `apply()`, which runs `applyChanges` and answers each step's host and the plugins whose new code failed
+  and kept the old; any other principal is refused `forbidden`. Pages, terminals and agent tools use the one object.
 - **Restart needed:** `plugins.state.base` compares base code with what runs by content (§21, the reload loop, with
   its one latched exception): the app's `base` files and directories hashed at start, the server's own code (a
   best-effort static scan of its entry, `process.argv[1]`, bundled by esbuild with the server's conditions only to
@@ -2558,19 +2840,49 @@ Decision "Slice 11's points", "Slice 11, P3" to "P9", and "Tutorial gaps" (1) (p
 - `chord/surfaces` serves the client surfaces (web and terminal) from the server; `chord/web` is a page's client host
   with its connection loop (p2's `keepConnected`), loading and applying the plugins' web facets. A base bundle per
   client kind built on the server from the app's entry (content-hashed; packages resolved with the server process's
-  conditions unless the app gives its own, so a page runs the Chord source the server runs); at page load the kind's
+  conditions unless the app gives its own, so a page runs the Chord source the server runs; the fonts, images and
+  WebAssembly its stylesheets name are files under `assets/`, named by their content); at page load the kind's
   current plugin set as one combined file named by its hash, later changed plugins one script each, each a script that
   registers itself (no eval); new scripts apply in place (`host.reload` in the page), their stylesheets (named by their
   content) loaded before and each plugin left with the stylesheet of the code it runs; pages learn of them through an
-  object the web component serves (the current set); a base code change reloads the page.
-- `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, and `usePageState(key, initial)`:
+  object the web component serves (the current set); a base code change reloads the page. A client starts without its
+  server (a page renders offline, a service worker's kept page): it follows the scripts object in the background and
+  applies the set shown when following begins as well as later ones.
+- **The connection loop** (`surfaces/connection.ts`, decision "Slice 11, P6"; the same loop in a page and a terminal's
+  sandbox, its clock, timers and wakes given): after a drop it reconnects after 250 ms doubling to 5 s (reset by a
+  connection open 10 s; the longest pause while the device is offline), at once on a wake (visible again, back online,
+  restored from the back/forward cache, a network change) and for the first drop after a wake (the socket that was
+  away); on a wake it replaces an open socket silent past the server's pings (25 s) once its next ping is overdue (at
+  least 1 s, for frames held while frozen); it gives up a socket not open after 20 s. After a close it asks the app's
+  `canRetry` beside the next attempt, never before it (a page's check asks the server's base over HTTP: seconds on a
+  network just woken), one question at a time (closes while one is open ask nothing more); a "no" stops the loop, and
+  an attempt it ends is reported `waiting`. A client asks the server's base there: another one stops the loop, then
+  calls `outdated` (a page reloads). States: `connecting`, `connected` (the socket opened), `waiting`.
+- An app with an HTTP stack of its own (p2) serves the surface's files itself (`webSurface(..., { routes: false })`:
+  the surface contributes no `Http` routes and gives `file`, `pageAssets` and `base`); a page styling itself turns the
+  kit's themes off (`startPage({ themes: false })`: no `Themes` provider, nothing written on `:root`); a page built
+  offline and served elsewhere (p2's Cloud Brain page)
+  is static (`startPage({ follow: false })`: its combined plugins only, no updates, never outdated); a server whose
+  loader resolves packages through a tsconfig's `paths` (a source checkout without `dist/`) names it (`tsconfig`), and
+  the base resolves through them too. Decision "Surfaces for an app with its own HTTP stack and styling".
+- **Looks and themes** (decision "Looks and themes", 2026-11-02; `src/surfaces/`): a theme is data in one registry,
+  `Themes` (version 1; `Theme`: `{ id, name, mode, colors, web?, tui? }`), with the base roles `accent`, `bg`, `fg`,
+  `muted`, `error`, `warning`, `success` (apps add roles; a later role is a version bump mapping old entries from the
+  fallback theme); plugins contribute themes, never the app's base CSS or components. A principal picks one dark and
+  one light theme (`ThemeChoice`, remote on the server, a preference kept per principal key like the locale choice),
+  the system preference chooses between them; a page writes the active theme as CSS variables on `:root`
+  (`--<role>`, its `web` extras), a terminal looks a role up (`terminalColor`: true colour or the nearest of 256).
+  Plugins scope their CSS with CSS modules.
+- `chord/react`: `HostProvider`, `useHold`, `useWatch`, `useRegistry`, `useRefState`, `useEvents(member, listener)`
+  (an event member subscribed while mounted, below "Channels"), and `usePageState(key, initial)`:
   `useState`'s pair kept by the page's host under a key, so a component remounted by a plugin reload (a new function)
   keeps it (§21, "UI on client hosts").
 - `chord/tui/launcher`: a Node client connecting with a token, always running the downloaded code (the app's terminal
   entry on `chord/tui`) in a sandbox (decision "The terminal's sandbox is a child process": a child process on pipes
   with an empty environment, `--permission` granting nothing and no SQLite; the builtin allowlist and a frozen
   substitute `process` inside; a bridge terminal; the trusted launcher outside, confirming copy, open and attach on its
-  own prompt); a component scope (`hold`, `watch`, `registry`, released on dispose, one `changed` callback for the
+  own prompt); a component scope (`hold`, `watch`, `registry`, `on` (an event member's listener), released on dispose,
+  one `changed` callback for the
   app's redraw; `pageState(key, initial)`, the host's page state shared with `usePageState`; `optimistic(read, reduce?)`,
   a reader showing optimistic actions while their calls are pending, with `add` and `pending`, React's `useOptimistic`,
   §3), no pi-tui dependency.
@@ -2644,7 +2956,13 @@ draft.notice = messages.message("saved", note.title, note.at);   // { namespace:
 ### Channels
 
 WebSocket byte channels with acknowledged windows, separate from object links, wait for a second user after the
-terminals (slice 10 D6); they would be built on top of plugin sockets.
+terminals (slice 10 D6); they would be built on top of plugin sockets. Game-like traffic (positions, cursors, samples
+interpolated by their own timeline) is events (section 11, decision "Events: fire-and-forget members"): lossy JSON
+values over the object links, subscribed in React with `useEvents(member, listener)` (subscribed while mounted, the
+latest committed listener called: updated in a layout effect, so an event delivered between a render's commit and its
+passive effects reaches that render's listener) and in a terminal with `TuiScope.on(member, listener)` (stopped on dispose); inputs go up as
+calls through the client's own latest-only outbox. A WebSocket is TCP: one lost packet stalls everything behind it
+for a round trip; WebTransport datagrams are the later path.
 
 ### Chunked transfers
 
@@ -2810,8 +3128,9 @@ const accepted = checkAccepts(NotesV2, {
 - A history starts with a base written in full with an explicit version (`remote()` / `local()`; `local` has flat
   `members` and no variants). `evolve(prev, (e) => …)` always continues it with structured edits: `state`,
   `addState`, `removeState`, `args`, `result`, `method(name, args, result)`, `addMethod`, `removeMethod` (local: no
-  variant argument), and for a local contract's keyed members `keyed`, `addKeyed`, `removeKeyed` (slice 7b; owner,
-  2026-10-26: keyed members' versions are mapped per key). Every version is materialized and fingerprinted at declaration, so an old plugin's own copy of
+  variant argument), for a local contract's keyed members `keyed`, `addKeyed`, `removeKeyed` (slice 7b; owner,
+  2026-10-26: keyed members' versions are mapped per key), and for event members `event`, `addEvent`, `removeEvent`
+  (decision "Events: fire-and-forget members"; local: no variant argument). Every version is materialized and fingerprinted at declaration, so an old plugin's own copy of
   v1 computes the same fingerprint; no build step, no generated files, no hand-copied fingerprints.
 - **A new history base** (a params change or a change of the variant set) is a new `remote()`/`local()` with an
   explicit version and no accepts for older versions: old plugins get `contract_mismatch` and must update.
@@ -2820,10 +3139,19 @@ const accepted = checkAccepts(NotesV2, {
   version and changed or was removed since: changed state `(currentMember) => oldMember`, removed state `(current
   variant state) => oldMember` or `"refuse"`, `args: (old) => current`, `result: (current) => old`, removed methods
   `{ call }` or `"refuse"`, changed keyed members `(current document) => old document` or `"refuse"` (mapped per key
-  for an older local consumer), removed keyed members `"refuse"`; added members need nothing. No-op edits need identity mappings. Untyped JavaScript
-  providers fail at declaration naming the member; unknown keys and wrong shapes are rejected.
+  for an older local consumer), removed keyed members `"refuse"`, changed event members `(current value) => old
+  value` or `"refuse"` (section `events`, by variant then member for a remote contract, flat for a local one: `{ 1: {
+  events: { player: { paddle: (current) => old } } } }`; `"refuse"` refuses that version's binding, as a refused state
+  member does); added members need nothing, and neither does a removed event member (the exception to the rule above:
+  an older consumer binds and receives none of it; an event has no value to hydrate). No-op edits need identity
+  mappings. Untyped JavaScript providers fail at declaration naming the member; unknown keys and wrong shapes are
+  rejected. An older consumer gets each event mapped by its version's mapping, run once per emit per bound older
+  version (the instance keeps one mapping per version while a reference of it is bound, dropped with the last one and
+  at the instance's end); a mapping that throws drops that emit for that version only, reported once per failure
+  episode (`event_mapping_failed { object, member, version, error }`), and is tried again at the next emit.
 - **The fingerprint** is a hash (`hash64`, portable, not a security boundary) of a schema-aware, data-only normal form
-  (`NORMAL_FORM_VERSION`, tied to the protocol): annotations dropped only on schema nodes, `required`/`enum` sorted,
+  (`NORMAL_FORM_VERSION`, tied to the protocol; each member a node of its kind: `{ state }`, `{ args, result }`,
+  `{ keyed }`, `{ event }`, so a contract without keyed or event members keeps its fingerprint): annotations dropped only on schema nodes, `required`/`enum` sorted,
   union and intersection order kept (it is meaning: defaults), a whitelist of JSON Schema keywords, executable features
   rejected; bytes are a `{ type: "bytes" }` data marker. Schemas are deep-copied into a private history (never frozen; immutable by convention).
 - **Schema helpers:** `str num int bool nul lit oneOf union obj arr map opt bytes unknown` and `type Static`.
@@ -2885,8 +3213,8 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
         · event chord.commit docs=2 ops=5
   ```
 
-- **Shared work** (one activation for several getters, a worker start) is its own root span linked to its first
-  trigger; each waiting span links to it. Routine runs, job runs, eviction, backoff retries and background closes are
+- **Shared work** (one activation for several getters, a worker start, a remote object's hold shared by references,
+  §7) is its own root span linked to its first trigger; each waiting span links to it. Routine runs, job runs, eviction, backoff retries and background closes are
   root spans linked to their trigger where one exists.
 - **Tiers:** spans for calls, methods, relays, holds, activations, opens, closes, loads, revocations, resolves, routine
   runs and job runs; events for commits inside methods, retries and parking; metrics for state messages, WebSocket
@@ -2918,8 +3246,9 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
 - **Spans:** `chord.call` (a consumer's call of a remote member, until its reply), `chord.method` (a provider running a
   method: under the call's carrier over a link, the caller's span on the same host; in `Attempt.call`, so local and
   remote calls alike), `chord.relay` (a relayed hold until it is held upstream, a relayed call until its reply is
-  forwarded; the member is `hold` or `#<index>`: a relay never knows names), `chord.hold` (a remote reference's hold
-  until its first `bound` or failure; its carrier rides on the reference's first hold only: a re-hold after a reconnect
+  forwarded; the member is `hold` or `#<index>`: a relay never knows names), `chord.hold` (a remote object's hold
+  until its first `bound` or failure: shared work, a root on the host's adapter whatever its first getter's context,
+  linked to that getter's span when traced; a joining getter links to it while it is open; its carrier rides on the reference's first hold only: a re-hold after a reconnect
   is a fresh `chord.hold` root of the host's adapter linked to the first, and a relay's re-hold upstream after a drop a
   fresh `chord.relay` root linked to its first, so a page kept open for days never adds children under a span long
   ended), `chord.activate`,
@@ -2961,7 +3290,11 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   statement changed; nothing is measured for it); the host-wide
   metrics go to the host's adapter (`host.metrics`), not to a context: `chord.link.bytes { direction }` (every encoded
   message of the host's links), `chord.link.state_messages`, `chord.commit.duration`, `chord.calls.in_flight`,
-  `chord.holds.active`, `chord.links.open`, `chord.park.duration`, `chord.backpressure.wait`. The cost counters still
+  `chord.holds.active`, `chord.links.open`, `chord.park.duration`, `chord.backpressure.wait`, and the events' (decision
+  "Events: fire-and-forget members"; an emit takes no context): `chord.events.emitted` (values emitted),
+  `chord.events.sent` (entries sent, one per hold), `chord.events.dropped { reason: "window" | "too_large" | "mapping" }`
+  (entries dropped; a mapping's one per emit and version) and `chord.events.encodes` (value encodes), nothing measured
+  or walked for them. The cost counters still
   count through the context of the work; a host with an adapter gives its links' and root scopes' work, when the app
   passed a context without a span (`BACKGROUND_CONTEXT`, as the kit does), a span that records nothing but carries the
   adapter's metrics (`countingOnly`), so they reach the adapter in an app too.
@@ -2981,14 +3314,17 @@ Chord reports traces, events and metrics through `@earendil-works/pi-telemetry`;
   which a recorder migrates a version 1 file in place (its rows' milliseconds multiplied), since several processes
   share one file and a new store version would strand the rows already there.
 - **The server is the one place telemetry is stored** (decisions "Telemetry from browser pages", "The server is the
-  one place telemetry is stored", "Who a span was for"; `src/telemetry-ingest/`): the server's store is the only
+  one place telemetry is stored", "Who a span was for"; `src/telemetry-ingest/`, exported as
+  `@earendil-works/chord/telemetry-ingest` for an app with its own hosts): the server's store is the only
   writer of its file. Pages and workers record with Chord's in-memory `TelemetryRecorder` (the SQLite store records
   with it too: one carrier format, one bounded queue of settled spans and metric aggregates per 10 s) and send finished
   spans in batches over the link they already have to the server's `PageTelemetry` and `WorkerTelemetry`
   (`ingest(batch)`), served by the kit when `startServer` has a telemetry store (`TelemetryContext` with the store's
   `ingest`). A worker sends every second (and its last spans and partial metrics when it closes), written as they are,
   stamped with its host (`chord.host`: its address key, known from the principal its link stamps). A page records
-  when `startPage({ telemetry: true })` and sends spans only, every 3 s and when hidden; the server treats it as
+  when `startPage({ telemetry: true })` and sends spans only, every 3 s and when hidden, if the app admits its
+  principal (`telemetryIngestFacet({ admit(principal) })`, a refused page's hold fails `forbidden`: the per-page budget
+  bounds one page, not one principal, who may open many; the kit admits every signed-in page); the server treats it as
   untrusted: the batch schema bounds everything (100 spans; names 128 characters; 32 attributes, keys 64, values 256
   characters or numbers or booleans; 16 events; 8 links; error messages 500; ids printable ASCII; no control
   characters anywhere), a span counts only when its id, trace and parent are under the page's own prefix
@@ -3031,7 +3367,11 @@ before/after per hop: `apps/p2/docs/p3-reviews/v2-cost-model.md`.
 | heartbeat | one timestamp write per received message; one timer per host |
 | apply | `applyImmutable`, structure shared |
 | new hold | the value encoded once (unavoidable) |
-| memory | one authoritative value per document per host; replicas and derived values share structure; one cached value per adapted member, object instance and version (while a reference of the version holds it) |
+| remote references of one host (§7) | per reference: one key (its type, params and address parts and its principal's JSON, cached per principal object) and one table lookup, its own watches, subscriptions and calls, no message; per shared remote object: one hold, snapshot and encoder at the provider, one decoder and replica per member here (measured, `benchmarks.md`: a joining reference 13 µs got and released, a commit to ten references one encode and 23 B) |
+| emit | one entry on the host's list, no Delta encoder, pending queue or diff; at the flush each value JSON-encoded (and compressed above the threshold) once per representation sent (the current version, each mapped version), the part reused for every hold and link; each `event` envelope then writes it, per recipient (measured, `benchmarks.md`: 13 µs delivered to one client, 64 µs to ten, one encode either way) |
+| relay, per event message | as any message (envelope only, parts never parsed), one ticket per message; never an ack of its own |
+| contracts without events | nothing per binding: no event record on a reference, no event nodes on a remote binding, no taps on a hold, shared empty event names (measured against the commit before events, `benchmarks.md`: equal time, a few dozen bytes per binding for the added fields) |
+| memory | one authoritative value per document per host; replicas and derived values share structure; one cached value per adapted member, object instance and version (while a reference of the version holds it); events: the host's list until the flush, per link and origin the ticket FIFO (one entry per `event` message in flight), per mapped version one mapping while bound |
 
 **Cost guards:** Chord reports full-value walks, deep copies, encodes, schema validations and materializations as
 ordinary telemetry metrics, always on (no test mode; with the NOOP adapter they cost an empty call where such work
@@ -3054,7 +3394,8 @@ registry keys with a `conflict` flag;
 `restart_required`; detached references counting toward presence; contracts taken from the running app; ceremony
 (`native/` directories, `defineNative`, lints); weakening type checking; "magic" input-field matching for delete; a
 factory trial; a migrate dry run; principal field patterns and re-stamping for revocation; `storeKey`; a consumer contract check during staging; reload votes; `defaultProjectTrust: "always"`; loader variants A and B; a topology layer above the host API; a stream type in
-Chord; callbacks as method arguments; `opaque` members; numeric middleware priorities; host addresses as data naming an
+Chord for byte and backpressured streams (events, section 11, are lossy JSON values without backpressure, replay or
+restart rules: no stream type either); callbacks as method arguments; `opaque` members; numeric middleware priorities; host addresses as data naming an
 input field; host-name strings in app code; host values (start data and platform bindings are core objects);
 consumer-side linger; registry composition as a staging check; a JSONL document storage; `tx.get` for documents; validating state and documents on commits or reads (migration results are validated once, R8); copying values on same-host calls; op-rewriting projections and a
 view algebra; keeping natives across reloads by name; Chord ending the process on a storage failure; an `optional`
@@ -3062,4 +3403,6 @@ flag on references; cross-relay reset coordination; count limits that refuse cal
 (`reset { hold }`, `reset { holds }`), relay recovery and id renumbering at relays (replaced by flow control per
 origin); a byte window, credit messages, snapshot admission and debt; `reset` from a consumer; a round-robin of
 relayed calls at the relay; `state: false` on references (C8); `inVariant`/`expectVariant` (C15); per-call deadlines; references shared between UI
-components across a remount (decision "A reloaded UI part shows its loading state").
+components across a remount (decision "A reloaded UI part shows its loading state"): references held at the same time
+share their host's hold (decision "References share one wire hold"), but no hold is kept past its last release, and
+there are no borrowed references or leases.

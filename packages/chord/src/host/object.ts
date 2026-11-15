@@ -24,6 +24,7 @@ import { CHAIN } from "../link/internal.ts";
 import type { RegistryContribution } from "../registries/internal.ts";
 import type { DeriveSource } from "../state/internal.ts";
 import { LiveQueries } from "../store/live-query.ts";
+import type { TableDefinition } from "../store/table.ts";
 import { chordMetrics } from "../telemetry.ts";
 import { refusal } from "./adapted.ts";
 import { Attempt, type PinnedKey, type Self } from "./attempt.ts";
@@ -34,7 +35,14 @@ import type { CloseFailed, NativeCloseReason } from "./native.ts";
 import { OPENING } from "./old-work.ts";
 import { Readiness } from "./readiness.ts";
 import { type Ended, type Failed, LIVE, LOADING, type RefState } from "./ref-state.ts";
-import { type CheckedParams, type Followed, type RetryWalk, retryWalk, type Target } from "./reference.ts";
+import {
+	type Binding,
+	type CheckedParams,
+	type Followed,
+	type RetryWalk,
+	retryWalk,
+	type Target,
+} from "./reference.ts";
 import { type RetrySource, RetryWakes } from "./retry-on.ts";
 import type { Request } from "./staging.ts";
 import { uuidv7 } from "./uuid.ts";
@@ -445,13 +453,23 @@ export class ChordObject implements Target {
 		this.#wakes.replace(sources, () => this.#wake());
 	}
 
+	/** Calls a method of the live object for a reference's `binding`: as its caller, at its version (`callAs`). */
+	call(method: string, args: unknown, binding: Binding, context: Context): Promise<unknown> {
+		return this.callAs(method, args, context, binding.caller, binding.contract.version);
+	}
+
+	/** Members on this host are no replicas (decision "References share one wire hold"). */
+	generationOf(): undefined {
+		return undefined;
+	}
+
 	/**
 	 * Calls a method of the live object for `caller`, bound at `version` (an older one maps its arguments and result,
 	 * Q10), its `chord.method` span under `parent` (the caller's span on this host, a call's carrier over a link). While
 	 * an attempt activates (a reload's restart, a retry), new work waits for its outcome (the gate); old work runs on a
 	 * restart's open old attempt.
 	 */
-	async call(
+	async callAs(
 		method: string,
 		args: unknown,
 		context: Context,
@@ -679,6 +697,16 @@ export class ChordObject implements Target {
 	 */
 	claimTable(table: string): void {
 		this.host.store!.claims.table(table, this);
+	}
+
+	/** Its type's name: the owner of its documents and tables in the store (R2). */
+	get owner(): string {
+		return this.served.contract.name;
+	}
+
+	/** The live instance's declaration of table `table` (SQL name), if it has one (a host data import's history). */
+	declaredTable(table: string): TableDefinition | undefined {
+		return this.instance?.declaredTable(table);
 	}
 
 	/** Its live queries by table (`self.query`), across its attempts: what its commits writing a table re-run. */

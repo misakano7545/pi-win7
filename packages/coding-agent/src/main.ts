@@ -48,7 +48,7 @@ import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
+import { resolveCliModel, resolveModelScopeWithDiagnostics, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -56,8 +56,8 @@ import type { CreateAgentSessionOptions } from "./core/sdk.ts";
 import {
 	formatMissingSessionCwdPrompt,
 	getMissingSessionCwdIssue,
+	getMissingSessionCwdOptions,
 	MissingSessionCwdError,
-	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
 import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "./core/settings-diagnostics.ts";
@@ -604,16 +604,6 @@ function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | u
 	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
-async function promptForMissingSessionCwd(
-	issue: SessionCwdIssue,
-	settingsManager: SettingsManager,
-): Promise<string | undefined> {
-	return showStartupSelector(settingsManager, formatMissingSessionCwdPrompt(issue), [
-		{ label: "Continue", value: issue.fallbackCwd },
-		{ label: "Cancel", value: undefined },
-	]);
-}
-
 export interface MainOptions {
 	extensionFactories?: InlineExtension[];
 }
@@ -755,11 +745,23 @@ export async function main(args: string[], options?: MainOptions) {
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {
 		if (appMode === "interactive") {
-			const selectedCwd = await promptForMissingSessionCwd(missingSessionCwdIssue, startupSettingsManager);
-			if (!selectedCwd) {
-				process.exit(0);
+			const sessionFile = missingSessionCwdIssue.sessionFile!;
+			const choice = await showStartupSelector(
+				startupSettingsManager,
+				formatMissingSessionCwdPrompt(missingSessionCwdIssue),
+				getMissingSessionCwdOptions(missingSessionCwdIssue),
+			);
+			switch (choice) {
+				case "continue":
+					sessionManager = SessionManager.open(sessionFile, sessionDir, cwd);
+					break;
+				// Fork like `--session <id>` from another project, so the choice sticks without rewriting history (#11060).
+				case "fork":
+					sessionManager = forkSessionOrExit(sessionFile, cwd, sessionDir);
+					break;
+				case undefined:
+					process.exit(0);
 			}
-			sessionManager = SessionManager.open(missingSessionCwdIssue.sessionFile!, sessionDir, selectedCwd);
 		} else {
 			console.error(chalk.red(new MissingSessionCwdError(missingSessionCwdIssue).message));
 			process.exit(1);
@@ -867,10 +869,15 @@ export async function main(args: string[], options?: MainOptions) {
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
-		const scopedModels =
+		const { scopedModels, diagnostics: modelScopeDiagnostics } =
 			modelPatterns && modelPatterns.length > 0
-				? await resolveModelScope(modelPatterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })
-				: [];
+				? await resolveModelScopeWithDiagnostics(modelPatterns, modelRuntime, {
+						signal: AbortSignal.timeout(15_000),
+					})
+				: { scopedModels: [], diagnostics: [] };
+		// Returned as diagnostics instead of printed: this factory runs again on /new, /resume and /fork,
+		// while the interactive TUI draws on the terminal (#11264).
+		diagnostics.push(...modelScopeDiagnostics);
 		const {
 			options: sessionOptions,
 			cliThinkingFromModel,

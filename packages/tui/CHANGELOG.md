@@ -4,8 +4,21 @@
 
 ### Fixed
 
+- Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize. Clearing the screen made Kitty free the cached image data that the redraw then tried to reuse ([#12010](https://github.com/earendil-works/pi/issues/12010))
+- Fixed text after a multi-row inline image in Markdown drawing over the image when the image's rows were joined with hard line breaks ([#12017](https://github.com/earendil-works/pi/issues/12017))
+- Fixed Kitty and iTerm2 images covering overlays drawn over them. An image that an overlay overlaps by row and column is now removed while the overlay is open and drawn again when it closes. Images beside an overlay, such as a sidebar, stay visible ([#11584](https://github.com/earendil-works/pi/issues/11584))
+
+## [1.5.2] - 2026-11-10
+
+## [1.5.1] - 2026-11-09
+
+### Fixed
+
 - Fixed Markdown rendering HTML comments (`<!-- ... -->`) as visible text ([#11710](https://github.com/earendil-works/pi/issues/11710))
 - Fixed fullscreen Kitty images in Orca showing only their first row. Orca's xterm.js image addon stores images in the cells they cover. `TuiAltScreen` now draws Kitty images after clearing and writing the rows they cover on every terminal, not only WezTerm ([#11835](https://github.com/earendil-works/pi/issues/11835))
+- Fixed deleting a paste marker with Backspace corrupting later short markers such as `[paste #2]`, causing the marker text to be submitted instead of its pasted content ([#11923](https://github.com/earendil-works/pi/issues/11923))
+- Fixed internal cursor markers leaking into terminal output, including with multiple markers or horizontally clipped content ([#9441](https://github.com/earendil-works/pi/pull/9441) by [@muyiyr](https://github.com/muyiyr))
+- Fixed Alacritty hyperlinks not being enabled when `TERM_PROGRAM` is unset; detection now also uses `TERM` and `ALACRITTY_WINDOW_ID` ([#11767](https://github.com/earendil-works/pi/issues/11767))
 
 ## [1.5.0] - 2026-11-02
 

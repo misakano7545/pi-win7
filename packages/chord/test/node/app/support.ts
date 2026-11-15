@@ -16,12 +16,12 @@ import {
 	AppInfo,
 	type AppOptions,
 	Files,
-	Sessions,
+	SignIns,
 	startServer,
 	WorkerInfo,
 } from "../../../src/node/app/index.ts";
 import { Http } from "../../../src/node/http/index.ts";
-import { writeFiles, writePlugin } from "../plugins/support.ts";
+import { settleFileEvents, writeFiles, writePlugin } from "../plugins/support.ts";
 
 /** The principals of these tests. */
 export type TestPrincipal =
@@ -40,7 +40,7 @@ export type UserPrincipal =
 export const Project = hostKind("project", { id: str() });
 
 /** The tests' API v1: Chord's surface and the kit's objects, as an app's API re-exports them. */
-export const API_V1 = { ...chord, AppInfo, WorkerInfo, Files, Sessions };
+export const API_V1 = { ...chord, AppInfo, WorkerInfo, Files, SignIns };
 
 /** The tests' API, as the server and the fixture worker have it. */
 export const API = {
@@ -108,6 +108,7 @@ export async function startTestApp<P extends Principal>(
 	await writeFiles(root, { ".keep": "" });
 	for (const [dir, files] of Object.entries(options.plugins ?? {}))
 		await writePlugin(root, dir, `@test/${dir}`, files);
+	await settleFileEvents();
 	const errors: unknown[] = [];
 	const app = await startServer<P>(
 		// The tests pass worker kinds (`withWorkers`, `workers`) only with `principal.worker`.
@@ -138,7 +139,11 @@ export async function startTestApp<P extends Principal>(
 		context,
 	);
 	// The bases built after the listen: most tests get the app as its first requests see it.
-	if (options.unbuilt !== true) await app.basesBuilt;
+	if (options.unbuilt !== true) {
+		await app.basesBuilt;
+		// Retire startup events before a test makes its first distinct edit.
+		await settleFileEvents();
+	}
 	const port = Number(new URL(app.ownerLink()).port);
 	return { app, errors, dataDir, root, port };
 }
@@ -226,13 +231,13 @@ export const WHOAMI = [
 	'export default defineFacet((_host, self) => self.contribute(Http, { routes: { "GET /whoami": async (_request, ctx) => ({ kind: "json", value: ctx.principal ?? null }) } }));',
 ].join("\n");
 
-/** The `Authorization` header of a new device session for `principal` on `app`. */
+/** The `Authorization` header of a new device sign-in for `principal` on `app`. */
 export async function bearerFor<P extends Principal>(
 	app: App<P>,
 	principal: P,
 ): Promise<{ readonly authorization: string }> {
 	const { token } = await app.host.root(
-		async (ctx) => (await ctx.get(Sessions, {})).issue({ principal, label: "test", kind: "device" }, ctx),
+		async (ctx) => (await ctx.get(SignIns, {})).issue({ principal, label: "test", kind: "device" }, ctx),
 		context,
 	);
 	return { authorization: `Bearer ${token}` };

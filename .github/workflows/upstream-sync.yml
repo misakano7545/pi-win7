@@ -7,9 +7,11 @@ name: upstream-sync
 # build from that same commit.
 #
 # A pi-tui change does not stop any of it, but the summary says so: only the target machine
-# can judge the console, so look at the release and pull it back if the shims misbehave. Two
-# things still stop short, because a runner cannot decide them: a merge that conflicts, and a
-# merge that touches workflow files when no credential here may push those.
+# can judge the console, so look at the release and pull it back if the shims misbehave. Only
+# a merge that conflicts outside `.github/workflows/` stops short. Upstream's workflow edits
+# are dropped instead of stopping the sync, unless SYNC_TOKEN (an owner PAT with the Workflows
+# grant) is set: a run token is refused any push that edits a workflow file, and waiting for a
+# human every week that upstream touched its own CI is what stalled these syncs before.
 on:
   schedule:
     # Mondays 03:00 UTC, 11:00 in CST, so a failed sync is waiting at the start of the week.
@@ -105,17 +107,46 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y p7zip-full
 
       - name: Merge upstream into the sync branch
+        id: merge
         if: steps.pin.outputs.work == '1'
+        env:
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BRANCH"
-          if ! git merge --no-edit upstream/main; then
-            echo "::error::upstream/main does not merge cleanly. These files conflict:"
-            git diff --name-only --diff-filter=U
-            exit 1
+          if ! git merge --no-commit --no-ff upstream/main; then
+            # A workflow conflict is not a conflict this job has to hand over: that directory
+            # is reset to main's copy below, which resolves those paths whatever upstream did.
+            conflicts="$(git diff --name-only --diff-filter=U | grep -v '^\.github/workflows/' || true)"
+            if [[ -n "$conflicts" ]]; then
+              echo "::error::upstream/main does not merge cleanly. These files conflict:"
+              printf '%s\n' "$conflicts"
+              exit 1
+            fi
           fi
+          if [[ -z "${SYNC_TOKEN:-}" ]]; then
+            # Keep this repo's workflows: no token this run holds may push a workflow change,
+            # so taking upstream's copies here would only make the push fail later. MERGE_HEAD
+            # names what is being dropped, which the summary repeats. Files upstream does not
+            # have at all (this repo's own two workflows) are not drops: they are listed as
+            # deleted by the tree diff and skipped by the cat-file check.
+            skipped="$(git diff --name-only HEAD MERGE_HEAD -- .github/workflows/ | while read -r f; do
+                         if git cat-file -e "MERGE_HEAD:$f" 2>/dev/null; then printf '%s\n' "$f"; fi
+                       done)"
+            git reset -q HEAD -- .github/workflows/
+            git checkout HEAD -- .github/workflows/
+            git clean -fdq .github/workflows/
+            {
+              echo "workflows<<WORKFLOWS_EOF"
+              printf '%s\n' "$skipped"
+              echo "WORKFLOWS_EOF"
+            } >>"$GITHUB_OUTPUT"
+            echo "kept this repo's .github/workflows; upstream had changed:"
+            printf '%s\n' "${skipped:-(nothing)}"
+          fi
+          git commit --no-edit
 
       # Knowing the package still works is the point of the sync, and the import baseline is
       # the only automated answer to "will this run on Windows 7". This runs here rather than
@@ -133,12 +164,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          KEPT_WORKFLOWS: ${{ steps.merge.outputs.workflows }}
         run: |
           set -euo pipefail
-          # No token a workflow run is given may push a workflow file -- there is no
-          # `workflows` key in a permissions block, by design -- and upstream edits its own
-          # workflows regularly. Name that case instead of failing on the raw rejection,
-          # unless SYNC_TOKEN (an owner PAT with that grant) is doing the push.
+          # The merge step drops upstream's workflow edits when no credential here may push
+          # them, so this is a backstop: it fires only if a workflow change reached the branch
+          # by another route. No token a workflow run is given may push a workflow file --
+          # there is no `workflows` key in a permissions block, by design.
           workflow_files="$(git diff --name-only main...HEAD -- .github/workflows/)"
           if [[ -n "$workflow_files" && -z "$SYNC_TOKEN" ]]; then
             echo "::warning::this merge changes $workflow_files, which a run token cannot push"
@@ -198,6 +230,21 @@ jobs:
             echo
             if [[ "${{ steps.pin.outputs.changed }}" == "1" ]]; then
               echo "The packaged pi moved to **${{ steps.pin.outputs.version }}**."
+              echo
+            fi
+            if [[ -n "${KEPT_WORKFLOWS:-}" ]]; then
+              echo "### upstream's workflow changes were not taken"
+              echo
+              echo "This job cannot push them: GitHub refuses a push that creates or updates a"
+              echo "file in \`.github/workflows/\` without the Workflows grant, which a run token"
+              echo "never has. The merge kept this repo's copies of:"
+              echo
+              echo '```'
+              printf '%s\n' "$KEPT_WORKFLOWS"
+              echo '```'
+              echo
+              echo 'Take them by hand with `git fetch upstream main && git merge upstream/main`,'
+              echo 'or set `SYNC_TOKEN` (a PAT with the `workflow` scope) and this job does it.'
               echo
             fi
             if [[ "${{ steps.pin.outputs.tui }}" != "0" ]]; then

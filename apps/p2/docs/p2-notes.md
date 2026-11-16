@@ -56,8 +56,8 @@ P2_FAKE=1 npm start          # http://127.0.0.1:8788, data in ~/.pi/p2
   (`/chord?web=<base>`); every other client names itself (`?client=tui`, `cloud`, `script` for scripts and tests;
   `src/runtime/stale-page.ts`). The server refuses a link naming another base, or neither a base nor a known client (a
   page from before 2026-11-12, which would re-hold types removed since), at once (close code 4001; the page reloads)
-  and the owner gets a notice (source `stale-pages`) naming who it was: the owner's access or device, or the guest,
-  the browser and its address. A TUI launcher from before the marker is refused too (it retries until updated). The last four plugin sets' files stay served. Web facets must not share module state with
+  and the server logs (source `stale-pages`, a log line, not a notice: nothing to act on) who it was: the owner's
+  access or device, or the guest, the browser and its address. A TUI launcher from before the marker is refused too (it retries until updated). The last four plugin sets' files stay served. Web facets must not share module state with
   another plugin's files (each plugin's script holds its own copy of a file it imports from another plugin):
   `plugin-practices.md`. The TUI launcher still polls `/__p2_tui` (p2's own TUI bundle). There is no Vite,
   source-module server or `index.html`.
@@ -790,7 +790,7 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   envs plugin's directory picker `plugins/envs/contract.web.tsx`); a contract imports only the API, shared packages
   and its own plugin's files. What two plugins share otherwise lives in the base and reaches them through the API
   (`src/runtime/schemas.ts`, `entries.ts`, `notices.ts`, `origin.ts`, `environments.ts`, `downloads.ts`,
-  `tui-chat.ts`). Base code imports no plugin code; only the page's shared components (`ModelPicker.tsx`) read
+  `tui-chat.ts`). Base code imports no plugin code; only the page's shared components (`model-choice.ts`) read
   plugin contract types (`import type`). A plugin's own files stay in the plugin, assets
   included (`plugins/terminals/vendor/ghostty`). Facets use no `import.meta`: the p2 app directory is start data
   (`Server.info.app`, `WorkerInit.app`). The terminal host (`plugins/terminals/main.ts`) is its own program, not a
@@ -918,6 +918,12 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   environment (README, Configuration). The server observes it as envs.json is observed (`ProjectService`: one observer,
   the last valid projects and the reason the last read failed); `Projects` serves them to owners with `local`, the
   server's hostname, which the TUI writes for this device.
+  - **New project** (`Projects.create`, v2; v1 without it is still served): the web sidebar's Projects rollup options
+    (`RollupSheet`'s "New project…") open the folder picker as its own layer (`project-folder`: the chat's `cwd`
+    picker would move the open session), then `NewProjectSheet` (layer `new-project`, locator the place) names it,
+    the folder's name first. `addProject` (`config.ts`) appends it with one place and writes the file anew (temp file,
+    rename; comments and formatting go), one create at a time; refused while the file is invalid, for a taken name and
+    for what `parseProjects` refuses. The observer then applies it as any edit. More places: by hand.
   - **Membership** is explicit, never derived from a path: `ProjectService` keeps session ID → project name in a
     persisted document of the server's Chord store (`p2.project-sessions`), not in the session catalog, so the
     catalog's schema and the `Sessions`/`Catalog` contracts stay as they are and dropping the plugin leaves only an
@@ -965,12 +971,13 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
     `ROLLUPS` are the built-in ones, `ordered` puts them in the owner's order. `sectionsOf` shows every rollup and
     applies relevance (pinned, open, working, unread, a failed worker, an operation, or `updatedAt` within the rollup's
     window: `1d`, `3d` (default), `1w`, `forever`): a session shows in every rollup and group that has it, a group only
-    with relevant sessions, a collapsed rollup or group only its row. `listPageOf` makes a rollup's or a group's list
-    page: every session, the aged ones (outside the window) after the others, by group for a rollup of groups; the
-    archived ones newest archived first. Keys: `recent`, `projects`, `folders`, `archive`, `project:<name>`,
-    `folder:<base64url of JSON [env, cwd]>` (no slash, for `/list/<key>`). Folders take as many trailing path segments
-    as tell same-named ones apart. Rollup order never follows activity. `glyphsOf` picks project glyphs by the glyphs
-    plugin's `placeSeed` (below); a group's tooltip is its path (a project's: its places), a Recents session's its cwd.
+    with relevant sessions or `keep` (every project's: a new one's "+" must be reachable), a collapsed rollup or group
+    only its row. `listPageOf` makes a rollup's or a group's list page: every session, the aged ones (outside the
+    window) after the others, by group for a rollup of groups; the archived ones newest archived first. Keys: `recent`,
+    `projects`, `folders`, `archive`, `project:<name>`, `folder:<base64url of JSON [env, cwd]>` (no slash, for
+    `/list/<key>`). Folders take as many trailing path segments as tell same-named ones apart. Rollup order never
+    follows activity. `glyphsOf` picks project glyphs by the glyphs plugin's `placeSeed` (below); a group's tooltip is
+    its path (a project's: its places), a Recents session's its cwd.
   - **View** (`Sidebar.tsx`, `Row.tsx`, `ListPage.tsx`, `RollupSheet.tsx`), on Elanor's `Sidebar` and
     `SideNavigation` and icons (re-exported by `src/web/navigation-components.ts`). Every row is a `NavRow`: a marker
     column as wide as an icon (a session's working mark, a group's project glyph, folder or lock, a Recents session's
@@ -1100,7 +1107,11 @@ call, hold, method, relay and activation; nothing is measured or walked for it. 
   `<sender kind="owner|guest|session|subagent" …/>` block (`src/runtime/sender.ts`, values escaped; a subagent's
   text follows as `[<intent>] <text>`), which the preamble explains and nothing reads back: readers use the entry data.
   Stop/dequeue restore text only to its author; removing a queued input (×,
-  no restore) discards it, as in Pi Mobile.
+  no restore) discards it, as in Pi Mobile. Stop is Durable's `Conversation.abort()`, which withdraws the queue in the
+  commit that marks the run; people's text it withdrew goes back to its authors (the caller's to the composer,
+  others' to their drafts; `conversations stop`, which has no author, gives all to drafts). Peer and subagent messages
+  are submitted with `onAbort: "keep"`, since their senders cannot take them back: they stay queued, as after a failed
+  run, and go with the next input. A main agent's queued task for a subagent is withdrawn (its reporter says so).
 - **Windowed conversation view** (`plugins/chat/worker.ts`, `src/web/history.ts`, `src/runtime/conversation-stats.ts`):
   `Chat.view` is Durable's view with image references: a window over the transcript (the fork-aware history in entry
   ID order, head markers in place), the newest 50 entries, then appends, back to 50 past 100, `before` the entry just

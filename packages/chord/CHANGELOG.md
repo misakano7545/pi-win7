@@ -4,6 +4,14 @@
 
 ### Breaking Changes
 
+- `RolloutHost` is a tagged union: `{ kind: "reloaded", host, report }`, `{ kind: "stopped", host }` or `{ kind: "failed", host, error }` (was `{ host, report }`, `{ host, stopped: true }`, `{ host, error }`). Migration: a rollout step's `reload` returns entries with `kind`; readers switch on `kind` instead of `"report" in entry`. A worker's reply to a reload is `reloaded` (with its report) or `reload_failed` (with its error).
+- `PluginSource` (`installPlugin`, the app kit's `plugins.install`) is tagged: `{ kind: "git", git, ref }` or `{ kind: "npm", npm, version }`. Migration: add the `kind`.
+- `SeriesResult` (`ChordStore.commitSeries`) is tagged: `{ kind: "stored", stored }` or `{ kind: "refused", stored, refused }` (was `{ stored, refused? }`). Migration: read `refused` after checking `result.kind === "refused"`.
+
+## [1.6.0] - 2026-11-20
+
+### Breaking Changes
+
 - `createWorkers` requires `store`, the store given to the server host's `createHost` (`undefined` only for a host without one): a worker's exit is published only once the commits queued in it before the exit settled. The app kit passes its own.
 - `telemetryIngestFacet` requires `admit(principal)`: only the pages of principals it admits may send their spans to `PageTelemetry`; a refused principal's hold fails `forbidden`. The app kit admits every signed-in page. Migration: pass `admit` (`() => true` keeps the old behaviour).
 - `HostError` `query_failed` carries `query` (the table's name for `self.query`, the named query's label for `self.liveQuery`, `self.count` and `self.list`) in place of `table`.
@@ -12,6 +20,9 @@
 
 - `@earendil-works/chord/telemetry-ingest`: the telemetry recorder, the page and worker batches and objects, the ingest facet and the senders, for an app wiring telemetry into hosts of its own.
 - Named queries (slice 14, first part): a `local` contract lists them with `queries(Item, { name: argsSchema })`, the table's owner implements the member with `self.queries(table, { map, reads?, partnerReads? }, builders)`, and any object on the store's host reads one live with `self.liveQuery(namedQuery, args, { first })`, counts it with `self.count(namedQuery, args)` or reads a page with `namedQuery.page(...)`. Arguments may be a watchable.
+- `createHttp`'s `links.opened(request, principal, close)` gets a third argument, `close`, which terminates that link at once: an app closes the links of a credential it revoked.
+- `memberNames(contract, variant)`: the names of the state members, methods and event members of one variant of a contract's current version (`{ state, methods, events }`), for an app's helper that fills a view's implementation from a store's reference.
+- The types `Method`, `LiteralsSchema` and `HostKeyed` are exported: a contract's inferred type holds them (a method, a `oneOf(...)`, a keyed member with a host kind), so a package that emits declarations for its contracts can name them through Chord's entry point.
 - Lists: `self.list(name, [[namedQuery, args]], { first })` returns `{ value, more }`, a list a screen loads more of. Its pages lie between fixed bookmarks, so loaded rows stay live, `more` sends only the new rows, and a row that moves leaves no gap and no duplicate; a reload keeps the pages it had.
 - Column sets: `defineColumns(name, { columns, key, indexes? })` and `defineTable(..., { exposes })` let another plugin's query test `exists(Set, match, condition)`, `existsNode(Set, match, node)` or join one row with `query(Table).join(Set, match)`. `compile(Set, condition)` and `query(Table).whereNode(Set, node)` pass a condition as data (`whereNode` and `existsNode` take the node as `unknown` and check it). A table handle's `page` and `count` take a query with `exists` and refuse one with a join. `evolveTable` takes `{ exposes }`.
 - Telemetry counters `chord.query.probes`, `chord.query.skips` and `chord.query.rows`.
@@ -25,6 +36,7 @@
 
 ### Changed
 
+- The workers component's worker base is minified (whitespace and syntax; names kept): each worker holds less source text (p3's measurements: about 0.4 MiB less per bare worker, more with bundled SDKs).
 - A commit runs a live query again only when it can change it: the store indexes every live read by the tables it uses, whoever owns it, and a commit's step skips the reads its writes cannot affect, by the columns an `update` assigns or by one keyed probe. `self.query` is rebuilt over this; a `put` of a row outside a window costs one more statement (the probe) than before.
 
 ### Fixed
@@ -33,6 +45,8 @@
 - A list or live query whose value was set several times in one commit (a list's row moving from one loaded page to another) published one frame per set; over a link that was two entries for one member in one state message, the protocol error `member twice in one state`, which closed the link. It publishes one frame per commit now: its last value, diffed from the value before the commit.
 - The workers component closes a worker's link when the worker exits, before it publishes the exit in `state` and before the address's next worker starts: a call the worker sent that was not handled yet is dropped and a running one is aborted, so nothing an exited worker reported is handled or commits after `state` says it is gone. Apps need no stale-worker check of their own.
 - The optional peer dependencies on `react`, `ws` and `esbuild` are ranges (`^19.3.0`, `^8.21.0`, `^0.28.2`), not exact versions: npm no longer refuses to install Chord in a project with another patch release of them, such as react 19.3.1 ([#12008](https://github.com/earendil-works/pi/issues/12008)).
+- Sync: a store whose outbox was turned off and on again after it committed could not upload any more (`uploadSession` failed with `OutboxUnavailableError` on every attempt): the commits between what the remote holds and the outbox's start were gone. The upload now creates an archive slot after the remote's head (the store's `export()`), so the session's history goes on from a full state, and `remoteHistory`/`pullSession` restore from the newest archive slot along the chain; a copy behind it gets `HistoryUnavailableError` and restores fresh.
+- Sync: a pull that read a remote body and then refused it (a copy behind an archive slot) left the body's file open until garbage collection, which Node 22 warns about (DEP0137) and Node 26 throws for, uncaught. `pullSession` now calls `return()` on every body it read, and a `FileSystemSyncRemote` body closes its file on `return()` also before its first read.
 
 ## [1.5.2] - 2026-11-10
 

@@ -63,7 +63,8 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
   may run in another order than unbundled (esbuild's splitting; base code must not rely on sibling order). A variable
   specifier stays an import Node resolves at run time, against the module's source file (its
   `import.meta.url`): outside the snapshot, so base code that must be in it imports with a literal specifier. ES modules
-  with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
+  minified (whitespace and syntax; names kept, so `name` is what unbundled code sees: every worker holds the base's
+  text), with inline source maps, forked with `--enable-source-maps` ahead of the app's `execArgv` (stack traces name the
   source files). The bundle stays in memory until the first fork, which writes its files into one private directory:
   `baseDir` when given (the component's own while it is open: emptied first; the kit's
   `<dataDir>/cache/workers/<kind>/`), else a new temporary one; written again when a cleaner removed one of them
@@ -131,10 +132,10 @@ workerMain(async ({ address, start, parent, plugins, onClose }, ctx) => {
 - **`close(ctx)`:** starts waiting in `start(address)` are aborted, the worker base's file removed, every child
   stopped, new starts reject `released/closed`; the host's close (the route's context) closes it too, and no exit
   after that is a failure.
-- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ host, report }` with
-  their load report once ready, or `{ host, error }`), then ships the kind's current set to every worker whose last
-  set is older, in parallel, one reload outstanding per child: `{ host, report }`, `{ host, stopped: true }` (stopped
-  cleanly meanwhile) or `{ host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
+- **`step(name)`** (§4): clears the failures from before it and retries the held ones (listed `{ kind: "reloaded", host, report }` with
+  their load report once ready, or `{ kind: "failed", host, error }`), then ships the kind's current set to every worker whose last
+  set is older, in parallel, one reload outstanding per child: `{ kind: "reloaded", host, report }`, `{ kind: "stopped", host }` (stopped
+  cleanly meanwhile) or `{ kind: "failed", host, error }` (a crash, a failed reload). The step's context bounds only its wait (an abort
   lists the waiting ones with the abort's error; a late reply still frees the child's slot).
 - **The child** (`workerMain`): reads the start message, takes the lock, makes its parent link (`started` on the app's
   `connect`), gives the app `plugins` (`WorkerPlugins.load(host, { kind, core })` over the shipped scripts, with the
